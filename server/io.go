@@ -159,7 +159,7 @@ func readMessage(conn net.Conn, deadline time.Duration) (message []byte, alive b
 
 	fullMessage := make([]byte, 0, int(length)) // preallocate required size for message
 	buffer := make([]byte, 1024)
-	err := conn.SetWriteDeadline(time.Now().Add(deadline)) // entire message must be read in this time
+	err := conn.SetReadDeadline(time.Now().Add(deadline)) // entire message must be read in this time
 
 	if err != nil {
 		logError(conn, err)

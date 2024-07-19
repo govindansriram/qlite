@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"net"
@@ -548,4 +549,216 @@ func Test_readMessageLength(t *testing.T) {
 		killChannel <- struct{}{}
 		time.Sleep(time.Second * 1) //TODO hacky solution pls change
 	})
+}
+
+func Test_readMessage(t *testing.T) {
+	killChannel := make(chan struct{})
+	started := make(chan struct{})
+	connectionChannel := make(chan net.Conn)
+	errorChannel := make(chan error)
+
+	t.Run("test standard read Message", func(t *testing.T) {
+		go startServer(killChannel, started, connectionChannel, errorChannel)
+		<-started
+
+		clientConn, err := net.Dial("tcp", "localhost:8080")
+		if err != nil {
+			t.Error(err)
+		}
+
+		defer func(clientConn net.Conn) {
+			_ = clientConn.Close()
+		}(clientConn)
+
+		duration := time.Second * 3
+
+		type packet struct {
+			message []byte
+			alive   bool
+		}
+
+		packetChan := make(chan packet)
+
+		select {
+		case err := <-errorChannel:
+			t.Error(err)
+		case serverConn := <-connectionChannel:
+
+			go func() {
+				message, alive := readMessage(serverConn, duration)
+				packetChan <- packet{message: message, alive: alive}
+			}()
+
+			request := make([]byte, 2048)
+			for idx := range 2048 {
+				request[idx] = 1
+			}
+
+			pos := 0
+			size := make([]byte, 4)
+			binary.LittleEndian.PutUint32(size, 2048)
+			mess := append(size, request...)
+
+			for pos != len(mess) {
+				n, err := clientConn.Write(mess[pos:])
+
+				if err != nil {
+					t.Error(err)
+					return
+				}
+
+				pos += n
+			}
+
+			pack := <-packetChan
+
+			if !pack.alive {
+				t.Error("connection closed unexpectedly")
+			}
+
+			if !bytes.Equal(request, pack.message) {
+				t.Error("message are not equal")
+			}
+		}
+
+		killChannel <- struct{}{}
+		time.Sleep(time.Second * 1) //TODO hacky solution pls change
+	})
+
+	t.Run("test early exit", func(t *testing.T) {
+		go startServer(killChannel, started, connectionChannel, errorChannel)
+		<-started
+
+		clientConn, err := net.Dial("tcp", "localhost:8080")
+		if err != nil {
+			t.Error(err)
+		}
+
+		defer func(clientConn net.Conn) {
+			_ = clientConn.Close()
+		}(clientConn)
+
+		duration := time.Second * 1
+
+		type packet struct {
+			message []byte
+			alive   bool
+		}
+
+		packetChan := make(chan packet)
+
+		select {
+		case err := <-errorChannel:
+			t.Error(err)
+		case serverConn := <-connectionChannel:
+
+			go func() {
+				message, alive := readMessage(serverConn, duration)
+				packetChan <- packet{message: message, alive: alive}
+			}()
+
+			request := make([]byte, 2048)
+			for idx := range 2048 {
+				request[idx] = 1
+			}
+
+			pos := 0
+			size := make([]byte, 4)
+			binary.LittleEndian.PutUint32(size, 4096)
+			mess := append(size, request...)
+
+			for pos != len(mess) {
+				n, err := clientConn.Write(mess[pos:])
+
+				if err != nil {
+					t.Error(err)
+					return
+				}
+
+				pos += n
+			}
+
+			pack := <-packetChan
+
+			if pack.alive {
+				t.Error("connection remainde intact")
+			}
+
+			if bytes.Equal(request, pack.message) {
+				t.Error("message are equal")
+			}
+		}
+
+		killChannel <- struct{}{}
+		time.Sleep(time.Second * 1) //TODO hacky solution pls change
+	})
+
+	t.Run("test exceed limit", func(t *testing.T) {
+		go startServer(killChannel, started, connectionChannel, errorChannel)
+		<-started
+
+		clientConn, err := net.Dial("tcp", "localhost:8080")
+		if err != nil {
+			t.Error(err)
+		}
+
+		defer func(clientConn net.Conn) {
+			_ = clientConn.Close()
+		}(clientConn)
+
+		duration := time.Second * 1
+
+		type packet struct {
+			message []byte
+			alive   bool
+		}
+
+		packetChan := make(chan packet)
+
+		select {
+		case err := <-errorChannel:
+			t.Error(err)
+		case serverConn := <-connectionChannel:
+
+			go func() {
+				message, alive := readMessage(serverConn, duration)
+				packetChan <- packet{message: message, alive: alive}
+			}()
+
+			request := make([]byte, 2048)
+			for idx := range 2048 {
+				request[idx] = 1
+			}
+
+			pos := 0
+			size := make([]byte, 4)
+			binary.LittleEndian.PutUint32(size, 2041)
+			mess := append(size, request...)
+
+			for pos != len(mess) {
+				n, err := clientConn.Write(mess[pos:])
+
+				if err != nil {
+					t.Error(err)
+					return
+				}
+
+				pos += n
+			}
+
+			pack := <-packetChan
+
+			if pack.alive {
+				t.Error("connection remainde intact")
+			}
+
+			if bytes.Equal(request, pack.message) {
+				t.Error("message are equal")
+			}
+		}
+
+		killChannel <- struct{}{}
+		time.Sleep(time.Second * 1) //TODO hacky solution pls change
+	})
+
 }
