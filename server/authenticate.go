@@ -31,10 +31,12 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"net"
+	"time"
 )
 
 /*
@@ -141,41 +143,83 @@ func checkPassword(password []byte, challenge [16]byte, provided []byte) bool {
 	return true
 }
 
+type reqState struct {
+	isAlive bool
+	user    *User
+	role    string
+}
+
+/*
+authenticate
+
+checks if a connection has valid credentials to maintain a connection
+*/
 func authenticate(serv Server, conn net.Conn) (alive bool, user *User, role string) {
-	challengePacket, challengeUuid := generateChallenge()
-	state := writeMessage(conn, challengePacket[:], serv.maxIoSeconds)
 
-	if !state {
-		return
+	response := make(chan reqState)
+
+	go func() {
+		challengePacket, challengeUuid := generateChallenge()
+		state := writeMessage(conn, challengePacket[:], serv.maxIoSeconds)
+
+		if !state {
+			response <- reqState{}
+			return
+		}
+
+		message, state := readMessage(conn, serv.maxIoSeconds)
+
+		if !state {
+			response <- reqState{}
+			return
+		}
+
+		err, userRole, username, passwordAndChallenge := parseCredentials(message)
+
+		if err != nil {
+			writeError(conn, err, serv.maxIoSeconds)
+			response <- reqState{}
+			return
+		}
+
+		pUser, err := getUser(serv.users, username, userRole)
+
+		if err != nil {
+			writeError(conn, err, serv.maxIoSeconds)
+			response <- reqState{}
+			return
+		}
+
+		isValid := checkPassword(pUser.password, challengeUuid, passwordAndChallenge)
+
+		if !isValid {
+			err = errors.New("error: password is invalid")
+			writeError(conn, err, serv.maxIoSeconds)
+			response <- reqState{}
+			return
+		}
+
+		state = writeMessage(conn, []byte("PASS"), serv.maxIoSeconds)
+
+		if !state {
+			response <- reqState{}
+			return
+		}
+
+		response <- reqState{
+			true,
+			pUser,
+			userRole,
+		}
+	}()
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(serv.maxIoSeconds*3))
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		return false, nil, ""
+	case resp := <-response:
+		return resp.isAlive, resp.user, resp.role
 	}
-
-	message, state := readMessage(conn, serv.maxIoSeconds)
-
-	if !state {
-		return
-	}
-
-	err, userRole, username, passwordAndChallenge := parseCredentials(message)
-
-	if err != nil {
-		writeError(conn, err, serv.maxIoSeconds)
-		return
-	}
-
-	pUser, err := getUser(serv.users, username, userRole)
-
-	if err != nil {
-		writeError(conn, err, serv.maxIoSeconds)
-		return
-	}
-
-	isValid := checkPassword(pUser.password, challengeUuid, passwordAndChallenge)
-
-	if !isValid {
-		err = errors.New("error: password is invalid")
-		writeError(conn, err, serv.maxIoSeconds)
-		return
-	}
-
-	return true, pUser, userRole
 }
