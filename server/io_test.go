@@ -246,7 +246,7 @@ func Test_writeConn(t *testing.T) {
 		time.Sleep(time.Second * 1) //TODO hacky solution pls change
 	})
 
-	t.Run("test write standard", func(t *testing.T) {
+	t.Run("test double write standard", func(t *testing.T) {
 		go startServer(killChannel, started, connectionChannel, errorChannel)
 		<-started
 

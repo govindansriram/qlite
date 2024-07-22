@@ -480,7 +480,7 @@ func Test_authenticate(t *testing.T) {
 
 			mess = bytes.ToLower(mess)
 
-			if !bytes.HasPrefix(mess, []byte("error")) {
+			if !bytes.Contains(mess, []byte("error")) {
 				t.Error("message is not an error")
 			}
 
@@ -570,7 +570,7 @@ func Test_authenticate(t *testing.T) {
 
 			mess = bytes.ToLower(mess)
 
-			if !bytes.HasPrefix(mess, []byte("error")) {
+			if !bytes.Contains(mess, []byte("error")) {
 				t.Error("message is not an error")
 			}
 
@@ -658,7 +658,7 @@ func Test_authenticate(t *testing.T) {
 
 			mess = bytes.ToLower(mess)
 
-			if !bytes.HasPrefix(mess, []byte("error")) {
+			if !bytes.Contains(mess, []byte("error")) {
 				t.Error("message is not an error")
 			}
 

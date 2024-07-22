@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -23,10 +24,7 @@ func closeConn(conn net.Conn) {
 	}
 }
 
-func gracefulShutdown(alive *bool, connections *uniqueConnections, listener net.Listener) {
-	if alive != nil {
-		*alive = false
-	}
+func gracefulShutdown(finished chan<- struct{}, connections *uniqueConnections, listener net.Listener) {
 
 	for _, con := range connections.connMap {
 		closeConn(con)
@@ -37,6 +35,8 @@ func gracefulShutdown(alive *bool, connections *uniqueConnections, listener net.
 	if err != nil {
 		log.Println(err)
 	}
+
+	finished <- struct{}{}
 }
 
 /*
@@ -127,10 +127,8 @@ func readMessageLength(conn net.Conn, deadline time.Duration) (length uint32, al
 
 	length = binary.LittleEndian.Uint32(size)
 	if length > 10*MB {
-		if !writeMessage(conn, []byte("error: message is longer than limit of 10 megabytes"), deadline) {
-			closeConn(conn)
-		}
-
+		err = errors.New("error: message is longer than limit of 10 megabytes")
+		writeCriticalError(conn, err, deadline)
 		return 0, false
 	}
 
@@ -178,15 +176,8 @@ func readMessage(conn net.Conn, deadline time.Duration) (message []byte, alive b
 		pos += n
 
 		if pos > int(length) {
-			status = writeMessage(
-				conn,
-				[]byte("error: received message length longer then specified"),
-				deadline)
-
-			if !status {
-				closeConn(conn)
-			}
-
+			err = errors.New("error: received message length longer then specified")
+			writeCriticalError(conn, err, deadline)
 			return
 		}
 
@@ -215,20 +206,38 @@ func connectionFull(
 		return "subscriber"
 	}
 
-	errorText := []byte(
-		fmt.Sprintf("error: could not establish connection since %s limit has been reached", name()))
+	err := fmt.Errorf("error: could not establish connection since %s limit has been reached", name())
+	writeCriticalError(conn, err, deadline)
+}
 
-	alive := writeMessage(conn, errorText, deadline)
+/*
+writeCriticalError
 
-	if alive {
+writes an error and closes the connection
+*/
+func writeCriticalError(conn net.Conn, err error, deadline time.Duration) {
+	if writeError(conn, err, deadline) {
 		closeConn(conn)
 	}
 }
 
-func writeError(conn net.Conn, err error, deadline time.Duration) {
-	if writeMessage(conn, []byte(err.Error()), deadline) {
-		closeConn(conn)
+func writeError(conn net.Conn, err error, deadline time.Duration) bool {
+	err = fmt.Errorf("FAIL;%v", err)
+	return writeMessage(conn, []byte(err.Error()), deadline)
+}
+
+func writeSuccess(conn net.Conn, message []byte, deadline time.Duration) bool {
+	start := []byte("PASS;")
+	full := make([]byte, len(start)+len(message))
+
+	copy(full, start)
+	copy(full[len(start):], message)
+
+	if !writeMessage(conn, full, deadline) {
+		return false
 	}
+
+	return true
 }
 
 func logError(conn net.Conn, err error) {

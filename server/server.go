@@ -135,26 +135,24 @@ func (s Server) Start(kill <-chan struct{}) {
 
 	log.Printf("server running on %s \n", server)
 
-	alive := true
-
-	defer gracefulShutdown(&alive, &connections, listener)
+	finished := make(chan struct{})
 
 	go func() {
 		<-sigChan
-		gracefulShutdown(&alive, &connections, listener)
+		gracefulShutdown(finished, &connections, listener)
 		os.Exit(0)
 	}()
 
 	go func() {
 		<-kill
-		gracefulShutdown(&alive, &connections, listener)
+		gracefulShutdown(finished, &connections, listener)
 	}()
 
-	listenerLoop(&alive, s, listener, &connections)
+	listenerLoop(finished, s, listener, &connections)
 }
 
 func listenerLoop(
-	alive *bool,
+	finished <-chan struct{},
 	server Server,
 	listener net.Listener,
 	connections *uniqueConnections,
@@ -167,63 +165,64 @@ func listenerLoop(
 
 	lock := sync.Mutex{}
 
-	if alive == nil {
-		panic("received nil life status")
-	}
+	for {
+		select {
+		case <-finished:
+			return
+		default:
+			workers <- struct{}{}
 
-	for *alive {
-		workers <- struct{}{}
+			conn, err := listener.Accept()
 
-		conn, err := listener.Accept()
-
-		if err != nil {
-			closeConn(conn)
-			<-workers
-			log.Printf("experienced a error trying to establish a connection: %v \n", err)
-			continue
-		}
-
-		pid := connections.write(conn)
-
-		go func() {
-
-			state, pUser, role := authenticate(server, conn)
-			defer func() {
+			if err != nil {
 				closeConn(conn)
-				connections.remove(pid)
 				<-workers
+				log.Printf("experienced a error trying to establish a connection: %v \n", err)
+				continue
+			}
+
+			pid := connections.write(conn)
+
+			go func() {
+
+				state, pUser, role := authenticate(server, conn)
+				defer func() {
+					closeConn(conn)
+					connections.remove(pid)
+					<-workers
+				}()
+
+				if !state {
+					return
+				}
+
+				var pCounter *atomic.Int32
+
+				if role == "publisher" {
+					pCounter = &publisherCount
+				} else if role == "subscriber" {
+					pCounter = &subscriberCount
+				}
+
+				lock.Lock()
+
+				cond1 := uint16(publisherCount.Load()) < server.maxPublisherConnections
+				cond2 := uint16(subscriberCount.Load()) < server.maxSubscriberConnections
+
+				if cond1 || cond2 {
+					pCounter.Add(1)
+					lock.Unlock()
+				} else {
+					lock.Unlock()
+					connectionFull(*pUser, conn, server.maxIoSeconds)
+					return
+				}
+
+				defer func() {
+					pCounter.Add(-1)
+				}()
+
 			}()
-
-			if !state {
-				return
-			}
-
-			var pCounter *atomic.Int32
-
-			if role == "publisher" {
-				pCounter = &publisherCount
-			} else if role == "subscriber" {
-				pCounter = &subscriberCount
-			}
-
-			lock.Lock()
-
-			cond1 := uint16(publisherCount.Load()) < server.maxPublisherConnections
-			cond2 := uint16(subscriberCount.Load()) < server.maxSubscriberConnections
-
-			if cond1 || cond2 {
-				pCounter.Add(1)
-				lock.Unlock()
-			} else {
-				lock.Unlock()
-				connectionFull(*pUser, conn, server.maxIoSeconds)
-				return
-			}
-
-			defer func() {
-				pCounter.Add(-1)
-			}()
-
-		}()
+		}
 	}
 }

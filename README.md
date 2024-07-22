@@ -117,17 +117,17 @@ The first 4 bytes of every message are an uint32 segment detailing the size of t
 Following the message length, will be the ascii encoded string PASS or FAIL delimited by a semicolon
 
 ### PUSH
-PASS: the position in the queue of the message, will come after the pass
-FAIL: an error message
+- PASS: the position in the queue as a little endian uint32 number
+- FAIL: an error message
 
 ### SPOP
-PASS: the message on the queue
-FAIL: an error message
+- PASS: the message on the queue
+- FAIL: an error message
 
 ### LPOP
-PASS: the message on the queue
-FAIL: an error message
+- PASS: the message on the queue
+- FAIL: an error message
 
 ### LEN
-PASS: how many messages are left on the queue
-FAIL: an error message
+- PASS: how many messages are left on the queue as a little endian uint32 number
+- FAIL: an error message

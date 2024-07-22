@@ -177,7 +177,7 @@ func authenticate(serv Server, conn net.Conn) (alive bool, user *User, role stri
 		err, userRole, username, passwordAndChallenge := parseCredentials(message)
 
 		if err != nil {
-			writeError(conn, err, serv.maxIoSeconds)
+			writeCriticalError(conn, err, serv.maxIoSeconds)
 			response <- reqState{}
 			return
 		}
@@ -185,7 +185,7 @@ func authenticate(serv Server, conn net.Conn) (alive bool, user *User, role stri
 		pUser, err := getUser(serv.users, username, userRole)
 
 		if err != nil {
-			writeError(conn, err, serv.maxIoSeconds)
+			writeCriticalError(conn, err, serv.maxIoSeconds)
 			response <- reqState{}
 			return
 		}
@@ -194,12 +194,12 @@ func authenticate(serv Server, conn net.Conn) (alive bool, user *User, role stri
 
 		if !isValid {
 			err = errors.New("error: password is invalid")
-			writeError(conn, err, serv.maxIoSeconds)
+			writeCriticalError(conn, err, serv.maxIoSeconds)
 			response <- reqState{}
 			return
 		}
 
-		state = writeMessage(conn, []byte("PASS"), serv.maxIoSeconds)
+		state = writeMessage(conn, []byte("PASS;"), serv.maxIoSeconds)
 
 		if !state {
 			response <- reqState{}
