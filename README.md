@@ -87,3 +87,47 @@ sent. The size should be an uint32 number in little endian format
    - first 4 bytes will hold the content length of the following message
    - ascii encoded error string
    - The connection will also automatically close
+
+## Protocol Request
+
+The first 4 bytes of every message are an uint32 segment detailing the size of the message (excluding these byte)
+
+After that the ascii name for one of 4 different functions should be present followed by a semicolon these are:
+1) PUSH: push to the queue can only be done by publishers 
+2) SPOP: (short pop), pop from the queue if there is data to pop, else returns error
+3) LPOP: (long pop), polls the queue for data until it gets it for x amount of time, if request times out returns error
+4) LEN: gets the length of the queue
+
+### PUSH
+after the semicolon add the message you wish to store on the queue. No binary format is required, it is on the consumer to
+decipher it.
+
+### SPOP
+No data is needed after the semicolon
+
+### LPOP
+No data is needed after the semicolon
+
+### LEN
+No data is required after the semicolon
+
+## Protocol response
+
+The first 4 bytes of every message are an uint32 segment detailing the size of the message (excluding these byte)
+Following the message length, will be the ascii encoded string PASS or FAIL delimited by a semicolon
+
+### PUSH
+PASS: the position in the queue of the message, will come after the pass
+FAIL: an error message
+
+### SPOP
+PASS: the message on the queue
+FAIL: an error message
+
+### LPOP
+PASS: the message on the queue
+FAIL: an error message
+
+### LEN
+PASS: how many messages are left on the queue
+FAIL: an error message
