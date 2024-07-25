@@ -52,21 +52,13 @@ func (t testServer) startServer() {
 	}()
 
 	var serverConn net.Conn
-	var brk bool
 
-	for {
-		select {
-		case err = <-errorChannel:
-			t.errChan <- err
-			return
-		case serverConn = <-connectionChannel:
-			t.connChan <- serverConn
-			brk = true
-		}
-
-		if brk {
-			break
-		}
+	select {
+	case err = <-errorChannel:
+		t.errChan <- err
+		return
+	case serverConn = <-connectionChannel:
+		t.connChan <- serverConn
 	}
 
 	defer func() {

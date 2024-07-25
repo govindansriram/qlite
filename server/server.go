@@ -237,7 +237,7 @@ func listenerLoop(
 					pCounter.Add(-1)
 				}()
 
-				receiveRequests(conn, server, &q)
+				receiveRequests(conn, server, &q, role)
 			}()
 		}
 	}

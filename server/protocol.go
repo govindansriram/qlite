@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func receiveRequests(conn net.Conn, server Server, q *queue.Queue) {
+func receiveRequests(conn net.Conn, server Server, q *queue.Queue, role string) {
 	for {
 		message, alive := readMessage(conn, server.maxIoSeconds)
 
@@ -21,6 +21,8 @@ func receiveRequests(conn net.Conn, server Server, q *queue.Queue) {
 		}
 
 		err, function, data := parseMessage(message)
+
+		function = strings.ToUpper(function)
 
 		if err != nil {
 			if !writeError(conn, err, server.maxIoSeconds) {
@@ -31,11 +33,26 @@ func receiveRequests(conn net.Conn, server Server, q *queue.Queue) {
 
 		switch function {
 		case "PUSH":
-			alive = handlePush(conn, data, q, server.maxIoSeconds)
+			if role != "publisher" {
+				err = errors.New("subscribers cannot push to the queue")
+				alive = writeError(conn, err, server.maxIoSeconds)
+			} else {
+				alive = handlePush(conn, data, q, server.maxIoSeconds)
+			}
 		case "SPOP":
-			alive = handleShortPop(conn, q, server.maxIoSeconds)
+			if role != "subscriber" {
+				err = errors.New("publishers cannot pop from the queue")
+				alive = writeError(conn, err, server.maxIoSeconds)
+			} else {
+				alive = handleShortPop(conn, q, server.maxIoSeconds)
+			}
 		case "LPOP":
-			alive = handleLongPop(conn, q, server.maxIoSeconds, server.pollingTime)
+			if role != "subscriber" {
+				err = errors.New("publishers cannot pop from the queue")
+				alive = writeError(conn, err, server.maxIoSeconds)
+			} else {
+				alive = handleLongPop(conn, q, server.maxIoSeconds, server.pollingTime)
+			}
 		case "LEN":
 			alive = handleLen(conn, q, server.maxIoSeconds)
 		default:
@@ -52,23 +69,35 @@ func receiveRequests(conn net.Conn, server Server, q *queue.Queue) {
 	}
 }
 
-func parseMessage(message []byte) (err error, function string, data []byte) {
-	splits := bytes.Split(message, []byte(";"))
+/*
+parseMessage
 
-	if len(splits) > 2 {
+extracts the function being requested, and it's subsequent arguments.
+*/
+func parseMessage(message []byte) (err error, function string, data []byte) {
+
+	before, data, found := bytes.Cut(message, []byte(";"))
+
+	if !found {
+		err = errors.New("no semicolon delimiter found")
+		return
+	}
+
+	if len(before) == 0 {
 		err = errors.New("error: bad request")
 		return
 	}
 
-	function = strings.ToUpper(string(splits[0]))
-
-	if len(splits) > 1 {
-		data = splits[1]
-	}
+	function = string(before)
 
 	return
 }
 
+/*
+handlePush
+
+adds the message to the queue
+*/
 func handlePush(conn net.Conn, messageData []byte, q *queue.Queue, deadline time.Duration) bool {
 	if len(messageData) == 0 {
 		err := errors.New("cannot push empty message")
@@ -95,6 +124,11 @@ func handlePush(conn net.Conn, messageData []byte, q *queue.Queue, deadline time
 	return writeSuccess(conn, posSlice, deadline)
 }
 
+/*
+handleShortPop
+
+pops the first element off the queue
+*/
 func handleShortPop(conn net.Conn, q *queue.Queue, deadline time.Duration) bool {
 
 	message, err := q.Pop()
@@ -136,7 +170,7 @@ func handleLongPop(conn net.Conn, q *queue.Queue, deadline time.Duration, pollin
 			case <-stopChan:
 				messageChan <- mess
 			default:
-				if mess.err != nil {
+				if mess.err == nil {
 					messageChan <- mess
 				}
 			}
