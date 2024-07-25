@@ -26,7 +26,6 @@ func receiveRequests(conn net.Conn, server Server, q *queue.Queue) {
 			if !writeError(conn, err, server.maxIoSeconds) {
 				return
 			}
-
 			continue
 		}
 
@@ -36,16 +35,15 @@ func receiveRequests(conn net.Conn, server Server, q *queue.Queue) {
 		case "SPOP":
 			alive = handleShortPop(conn, q, server.maxIoSeconds)
 		case "LPOP":
-			alive = handleLongPop() //TODO: add polling time
+			alive = handleLongPop(conn, q, server.maxIoSeconds, server.pollingTime)
 		case "LEN":
-			alive = handleLen() //TOOD: write this
+			alive = handleLen(conn, q, server.maxIoSeconds)
 		default:
 			err = fmt.Errorf(
 				"error: error can not handle function %s, options are PUSH, LPOP, SPOP and LEN",
 				function)
 
 			alive = writeError(conn, err, server.maxIoSeconds)
-
 		}
 
 		if !alive {
@@ -112,6 +110,13 @@ func handleShortPop(conn net.Conn, q *queue.Queue, deadline time.Duration) bool 
 	return writeSuccess(conn, message, deadline)
 }
 
+func handleLen(conn net.Conn, q *queue.Queue, deadline time.Duration) bool {
+	length := q.Len()
+	posSlice := make([]byte, 4)
+	binary.LittleEndian.PutUint32(posSlice, uint32(length))
+	return writeSuccess(conn, posSlice, deadline)
+}
+
 func handleLongPop(conn net.Conn, q *queue.Queue, deadline time.Duration, pollingTime time.Duration) bool {
 
 	type packet struct {
@@ -123,7 +128,7 @@ func handleLongPop(conn net.Conn, q *queue.Queue, deadline time.Duration, pollin
 	stopChan := make(chan struct{}) // stops the reading of the queue
 
 	go func() {
-		for { // read from the queue until a teh queue pops or a stop signal is received
+		for { // read from the queue until the queue pops or a stop signal is received
 			message, err := q.Pop()
 			mess := packet{err: err, message: message}
 
@@ -146,7 +151,7 @@ func handleLongPop(conn net.Conn, q *queue.Queue, deadline time.Duration, pollin
 	select {
 	case <-ctx.Done():
 		stopChan <- struct{}{} // stop the reading
-		mess = <-messageChan   // retrieve teh mast message
+		mess = <-messageChan   // retrieve the last message
 		if mess.err != nil {
 			mess.err = errors.New("error: no data could be dequeued in the specified time period")
 		}

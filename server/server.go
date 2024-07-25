@@ -1,6 +1,7 @@
 package server
 
 import (
+	"benchai/qlite/queue"
 	"errors"
 	"fmt"
 	"log"
@@ -81,11 +82,13 @@ type Server struct {
 	port                     uint16        // the port the server will run on
 	maxSubscriberConnections uint16        // the max amount of subscriber connections
 	maxPublisherConnections  uint16        // the max amount of publisher connections
-	maxMessages              uint16        // the max amount of messages that can be in the queue
+	maxMessages              uint32        // the max amount of messages that can be in the queue
+	maxMessageSize           *uint32       // the max size a message can be
 	maxIoSeconds             time.Duration // how much time can be spent waiting for IO messages to complete
+	pollingTime              time.Duration // how long to poll the queue for a response
 }
 
-func NewServer(users []User, port, maxSubs, maxPubs, maxMess uint16) (*Server, error) {
+func NewServer(users []User, port, maxSubs, maxPubs uint16, maxMess uint32) (*Server, error) {
 	if len(users) == 0 {
 		return nil, errors.New("no users are present for connection")
 	}
@@ -110,6 +113,8 @@ func NewServer(users []User, port, maxSubs, maxPubs, maxMess uint16) (*Server, e
 		maxMess = 100
 	}
 
+	maxSize := 9 * MB
+
 	return &Server{
 		users:                    users,
 		port:                     port,
@@ -117,6 +122,8 @@ func NewServer(users []User, port, maxSubs, maxPubs, maxMess uint16) (*Server, e
 		maxPublisherConnections:  maxPubs,
 		maxMessages:              maxMess,
 		maxIoSeconds:             time.Second * 2,
+		pollingTime:              time.Second * 10,
+		maxMessageSize:           &maxSize,
 	}, nil
 }
 
@@ -172,6 +179,7 @@ func listenerLoop(
 	}()
 
 	workers := make(chan struct{}, server.maxPublisherConnections+server.maxSubscriberConnections)
+	q := queue.NewQueue(server.maxMessages, server.maxMessageSize)
 	var publisherCount atomic.Int32
 	var subscriberCount atomic.Int32
 	lock := sync.Mutex{}
@@ -228,6 +236,8 @@ func listenerLoop(
 				defer func() {
 					pCounter.Add(-1)
 				}()
+
+				receiveRequests(conn, server, &q)
 			}()
 		}
 	}

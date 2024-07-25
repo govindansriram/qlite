@@ -19,7 +19,7 @@ type serverSettings struct {
 	Port                     uint16 `yaml:"port"`
 	MaxSubscriberConnections uint16 `yaml:"maxSubscriberConnections"`
 	MaxPublisherConnections  uint16 `yaml:"maxPublisherConnections"`
-	MaxMessages              uint16 `yaml:"maxMessages"`
+	MaxMessages              uint32 `yaml:"maxMessages"`
 }
 
 func (s *serverSettings) build() (*server.Server, error) {
