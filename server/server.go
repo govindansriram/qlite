@@ -11,12 +11,22 @@ import (
 	"time"
 )
 
+/*
+uniqueConnections
+
+holds all currently active connections, useful for closing all active sessions in case of a shutdown
+*/
 type uniqueConnections struct {
 	currentId atomic.Uint32
 	lock      sync.Mutex
 	connMap   map[uint32]net.Conn
 }
 
+/*
+write
+
+stores a connection
+*/
 func (u *uniqueConnections) write(conn net.Conn) uint32 {
 	u.lock.Lock()
 	defer u.lock.Unlock()
@@ -29,13 +39,23 @@ func (u *uniqueConnections) write(conn net.Conn) uint32 {
 	return key
 }
 
+/*
+remove
+
+deletes a connection
+*/
 func (u *uniqueConnections) remove(key uint32) {
 	u.lock.Lock()
 	defer u.lock.Unlock()
 	delete(u.connMap, key)
 }
 
-func create(expectedSize uint16) uniqueConnections {
+/*
+newUniqueConnections
+
+creates a new uniqueConnections instance
+*/
+func newUniqueConnections(expectedSize uint16) uniqueConnections {
 	return uniqueConnections{
 		connMap: make(map[uint32]net.Conn, expectedSize),
 	}
@@ -48,6 +68,11 @@ type User struct {
 	subscriber bool   // user can read messages from the queue
 }
 
+/*
+NewUser
+
+create a user object
+*/
 func NewUser(name, password string, publisher, subscriber bool) (*User, error) {
 
 	if len(name) == 0 {
@@ -176,7 +201,7 @@ func listenerLoop(
 	server Server,
 	listener net.Listener,
 ) {
-	connections := create(server.maxPublisherConnections + server.maxSubscriberConnections)
+	connections := newUniqueConnections(server.maxPublisherConnections + server.maxSubscriberConnections)
 	defer func() {
 		for _, con := range connections.connMap {
 			closeConn(con)

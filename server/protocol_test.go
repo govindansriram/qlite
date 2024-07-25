@@ -125,7 +125,7 @@ func Test_handlePush(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1000, &maxMessSize)
+		q := queue.NewQueue(1000, maxMessSize)
 		alive := handlePush(serverConn, bodyBytes, &q, duration)
 
 		if !alive {
@@ -173,7 +173,7 @@ func Test_handlePush(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1000, &maxMessSize)
+		q := queue.NewQueue(1000, maxMessSize)
 
 		for range routines {
 			alive := handlePush(serverConn, bodyBytes, &q, duration)
@@ -218,7 +218,7 @@ func Test_handlePush(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1000, &maxMessSize)
+		q := queue.NewQueue(1000, maxMessSize)
 		alive := handlePush(serverConn, []byte{}, &q, duration)
 
 		if !alive {
@@ -256,7 +256,7 @@ func Test_handlePush(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1, &maxMessSize)
+		q := queue.NewQueue(1, maxMessSize)
 
 		_, err = q.Push([]byte("123"))
 
@@ -307,7 +307,7 @@ func Test_shortPop(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1, &maxMessSize)
+		q := queue.NewQueue(1, maxMessSize)
 		_, err = q.Push([]byte("123"))
 		if err != nil {
 			t.Fatal(err)
@@ -358,7 +358,7 @@ func Test_shortPop(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(50, &maxMessSize)
+		q := queue.NewQueue(50, maxMessSize)
 
 		for range routines {
 			_, err = q.Push([]byte("123"))
@@ -400,7 +400,7 @@ func Test_shortPop(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1, &maxMessSize)
+		q := queue.NewQueue(1, maxMessSize)
 
 		alive := handleShortPop(serverConn, &q, duration)
 
@@ -444,7 +444,7 @@ func Test_longPop(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1, &maxMessSize)
+		q := queue.NewQueue(1, maxMessSize)
 		_, err = q.Push([]byte("1234"))
 
 		if err != nil {
@@ -492,7 +492,7 @@ func Test_longPop(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1, &maxMessSize)
+		q := queue.NewQueue(1, maxMessSize)
 
 		if err != nil {
 			t.Error(err)
@@ -548,7 +548,7 @@ func Test_longPop(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1, &maxMessSize)
+		q := queue.NewQueue(1, maxMessSize)
 
 		alive := handleLongPop(serverConn, &q, time.Second*10, time.Millisecond*100)
 
@@ -587,7 +587,7 @@ func Test_len(t *testing.T) {
 		ts.endServer(t)
 	}()
 
-	q := queue.NewQueue(10, &maxMessSize)
+	q := queue.NewQueue(10, maxMessSize)
 	_, err = q.Push([]byte("12354"))
 	if err != nil {
 		t.Error(err)
