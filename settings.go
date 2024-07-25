@@ -4,6 +4,7 @@ import (
 	"benchai/qlite/server"
 	"gopkg.in/yaml.v3"
 	"io"
+	"log"
 	"os"
 )
 
@@ -20,6 +21,9 @@ type serverSettings struct {
 	MaxSubscriberConnections uint16 `yaml:"maxSubscriberConnections"`
 	MaxPublisherConnections  uint16 `yaml:"maxPublisherConnections"`
 	MaxMessages              uint32 `yaml:"maxMessages"`
+	MaxMessageSize           uint32 `yaml:"maxMessageSize"`
+	MaxIoTimeSeconds         uint16 `yaml:"maxIoTimeSeconds"`
+	MaxPollingTimeSeconds    uint16 `yaml:"maxPollingTimeSeconds"`
 }
 
 func (s *serverSettings) build() (*server.Server, error) {
@@ -35,7 +39,15 @@ func (s *serverSettings) build() (*server.Server, error) {
 		users[idx] = *converted
 	}
 
-	serv, err := server.NewServer(users, s.Port, s.MaxSubscriberConnections, s.MaxPublisherConnections, s.MaxMessages)
+	serv, err := server.NewServer(
+		users,
+		s.Port,
+		s.MaxSubscriberConnections,
+		s.MaxPublisherConnections,
+		s.MaxMessages,
+		s.MaxMessageSize,
+		s.MaxIoTimeSeconds,
+		s.MaxPollingTimeSeconds)
 
 	if err != nil {
 		return nil, err
@@ -44,17 +56,26 @@ func (s *serverSettings) build() (*server.Server, error) {
 	return serv, nil
 }
 
-func loadServerSettings(file os.File) (*server.Server, error) {
-	content, err := io.ReadAll(&file)
+func loadServerSettings(file *os.File) (*server.Server, error) {
+	defer func() {
+		err := file.Close()
+		if err != nil {
+			log.Println(err)
+		}
+	}()
 
+	_, err := file.Seek(0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	content, err := io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
 
 	settings := &serverSettings{}
-
 	err = yaml.Unmarshal(content, settings)
-
 	serv, err := settings.build()
 
 	if err != nil {

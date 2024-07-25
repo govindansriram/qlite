@@ -22,7 +22,7 @@ type Queue struct {
 	backingSlice   [][]byte
 	lock           sync.Mutex
 	maxMessages    uint32
-	maxMessageSize *uint32
+	maxMessageSize uint32
 	readPos        atomic.Int32
 	writePos       atomic.Int32
 }
@@ -43,7 +43,7 @@ NewQueue
 
 creates a new Queue
 */
-func NewQueue(maxMessCount uint32, maxMessSize *uint32) Queue {
+func NewQueue(maxMessCount uint32, maxMessSize uint32) Queue {
 	var split = maxMessCount
 
 	if maxMessCount > 10 {
@@ -110,7 +110,7 @@ func (q *Queue) Push(message []byte) (uint32, error) {
 		return 0, errors.New("queue is full")
 	}
 
-	if q.maxMessageSize != nil && len(message) > int(*q.maxMessageSize) {
+	if len(message) > int(q.maxMessageSize) {
 		return 0, errors.New("message is too large")
 	}
 

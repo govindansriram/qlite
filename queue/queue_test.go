@@ -9,6 +9,9 @@ import (
 	"testing"
 )
 
+const KB uint32 = 1024
+const MB = KB * KB
+
 func generateBytes() []byte {
 	length := rand.IntN(8) + 1
 	buffer := make([]byte, length)
@@ -32,7 +35,7 @@ func TestQueue_Pop(t *testing.T) {
 
 		q := Queue{
 			backingSlice:   fullBuffer,
-			maxMessageSize: nil,
+			maxMessageSize: 9 * MB,
 			maxMessages:    routines,
 		}
 
@@ -65,7 +68,7 @@ func TestQueue_Pop(t *testing.T) {
 
 		q := Queue{
 			backingSlice:   fullBuffer,
-			maxMessageSize: nil,
+			maxMessageSize: 9 * MB,
 			maxMessages:    routines,
 		}
 
@@ -86,7 +89,7 @@ func TestQueue_Push(t *testing.T) {
 
 		q := Queue{
 			backingSlice:   fullBuffer,
-			maxMessageSize: nil,
+			maxMessageSize: 9 * MB,
 			maxMessages:    routines,
 		}
 
@@ -134,7 +137,7 @@ func TestQueue_Push(t *testing.T) {
 
 		q := Queue{
 			backingSlice:   fullBuffer,
-			maxMessageSize: nil,
+			maxMessageSize: 9 * MB,
 			maxMessages:    routines,
 		}
 
@@ -156,7 +159,7 @@ func TestQueue_Push(t *testing.T) {
 
 		q := Queue{
 			backingSlice:   fullBuffer,
-			maxMessageSize: &maxSize,
+			maxMessageSize: maxSize,
 			maxMessages:    routines,
 		}
 
@@ -199,7 +202,7 @@ simulate 100 concurrent reads and 100 concurrent writes in random order
 */
 func TestQueue_All(t *testing.T) {
 	const mx = uint32(100)
-	queue := NewQueue(mx, nil)
+	queue := NewQueue(mx, 9*MB)
 
 	wgPop := sync.WaitGroup{}
 	dataChan := make(chan []byte)

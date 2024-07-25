@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
-	"os/signal"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -83,12 +80,21 @@ type Server struct {
 	maxSubscriberConnections uint16        // the max amount of subscriber connections
 	maxPublisherConnections  uint16        // the max amount of publisher connections
 	maxMessages              uint32        // the max amount of messages that can be in the queue
-	maxMessageSize           *uint32       // the max size a message can be
+	maxMessageSize           uint32        // the max size a message can be
 	maxIoSeconds             time.Duration // how much time can be spent waiting for IO messages to complete
-	pollingTime              time.Duration // how long to poll the queue for a response
+	pollingTimeSeconds       time.Duration // how long to poll the queue for a response
 }
 
-func NewServer(users []User, port, maxSubs, maxPubs uint16, maxMess uint32) (*Server, error) {
+func NewServer(
+	users []User,
+	port,
+	maxSubs,
+	maxPubs uint16,
+	maxMess uint32,
+	maxMessSize uint32,
+	maxIoTimeSeconds uint16,
+	maxPollingTimeSeconds uint16) (*Server, error) {
+
 	if len(users) == 0 {
 		return nil, errors.New("no users are present for connection")
 	}
@@ -102,7 +108,7 @@ func NewServer(users []User, port, maxSubs, maxPubs uint16, maxMess uint32) (*Se
 	}
 
 	if maxSubs == 0 {
-		maxSubs = 1
+		maxSubs = 2
 	}
 
 	if maxPubs == 0 {
@@ -113,7 +119,17 @@ func NewServer(users []User, port, maxSubs, maxPubs uint16, maxMess uint32) (*Se
 		maxMess = 100
 	}
 
-	maxSize := 9 * MB
+	if maxMessSize == 0 {
+		maxMessSize = 9 * MB
+	}
+
+	if maxIoTimeSeconds == 0 {
+		maxIoTimeSeconds = 3
+	}
+
+	if maxPollingTimeSeconds == 0 {
+		maxPollingTimeSeconds = 10
+	}
 
 	return &Server{
 		users:                    users,
@@ -121,18 +137,14 @@ func NewServer(users []User, port, maxSubs, maxPubs uint16, maxMess uint32) (*Se
 		maxSubscriberConnections: maxSubs,
 		maxPublisherConnections:  maxPubs,
 		maxMessages:              maxMess,
-		maxIoSeconds:             time.Second * 2,
-		pollingTime:              time.Second * 10,
-		maxMessageSize:           &maxSize,
+		maxIoSeconds:             time.Duration(maxIoTimeSeconds) * time.Second,
+		pollingTimeSeconds:       time.Duration(maxPollingTimeSeconds) * time.Second,
+		maxMessageSize:           maxMessSize,
 	}, nil
 }
 
 func (s Server) Start(kill <-chan struct{}) {
 	server := fmt.Sprintf("localhost:%d", s.port)
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
 	listener, err := net.Listen("tcp", server)
 
 	if err != nil {
@@ -152,15 +164,8 @@ func (s Server) Start(kill <-chan struct{}) {
 	finished := make(chan struct{})
 
 	go func() {
-		for {
-			select {
-			case <-sigChan:
-				finished <- struct{}{}
-				os.Exit(0)
-			case <-kill:
-				finished <- struct{}{}
-			}
-		}
+		<-kill
+		finished <- struct{}{}
 	}()
 
 	listenerLoop(finished, s, listener)

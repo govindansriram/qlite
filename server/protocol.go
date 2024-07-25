@@ -51,7 +51,7 @@ func receiveRequests(conn net.Conn, server Server, q *queue.Queue, role string) 
 				err = errors.New("publishers cannot pop from the queue")
 				alive = writeError(conn, err, server.maxIoSeconds)
 			} else {
-				alive = handleLongPop(conn, q, server.maxIoSeconds, server.pollingTime)
+				alive = handleLongPop(conn, q, server.maxIoSeconds, server.pollingTimeSeconds)
 			}
 		case "LEN":
 			alive = handleLen(conn, q, server.maxIoSeconds)
