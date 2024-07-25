@@ -162,7 +162,6 @@ func handleLongPop(conn net.Conn, q *queue.Queue, deadline time.Duration, pollin
 		if !writeError(conn, mess.err, deadline) {
 			return false
 		}
-
 		return true
 	}
 
