@@ -126,64 +126,71 @@ func (s Server) Start(kill <-chan struct{}) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	connections := create(s.maxPublisherConnections + s.maxSubscriberConnections)
 	listener, err := net.Listen("tcp", server)
 
 	if err != nil {
-		log.Fatalf("could not start server due to: %v", err)
+		log.Printf("could not start server due to: %v", err)
+		return
 	}
+
+	defer func() {
+		err := listener.Close()
+		if err != nil {
+			log.Println(err)
+		}
+	}()
 
 	log.Printf("server running on %s \n", server)
 
 	finished := make(chan struct{})
 
 	go func() {
-		<-sigChan
-		gracefulShutdown(finished, &connections, listener)
-		os.Exit(0)
+		for {
+			select {
+			case <-sigChan:
+				finished <- struct{}{}
+				os.Exit(0)
+			case <-kill:
+				finished <- struct{}{}
+			}
+		}
 	}()
 
-	go func() {
-		<-kill
-		gracefulShutdown(finished, &connections, listener)
-	}()
-
-	listenerLoop(finished, s, listener, &connections)
+	listenerLoop(finished, s, listener)
 }
 
 func listenerLoop(
 	finished <-chan struct{},
 	server Server,
 	listener net.Listener,
-	connections *uniqueConnections,
 ) {
+	connections := create(server.maxPublisherConnections + server.maxSubscriberConnections)
+	defer func() {
+		for _, con := range connections.connMap {
+			closeConn(con)
+		}
+	}()
 
 	workers := make(chan struct{}, server.maxPublisherConnections+server.maxSubscriberConnections)
-
 	var publisherCount atomic.Int32
 	var subscriberCount atomic.Int32
-
 	lock := sync.Mutex{}
 
 	for {
 		select {
 		case <-finished:
 			return
-		default:
-			workers <- struct{}{}
-
-			conn, err := listener.Accept()
-
-			if err != nil {
-				closeConn(conn)
-				<-workers
-				log.Printf("experienced a error trying to establish a connection: %v \n", err)
-				continue
-			}
-
-			pid := connections.write(conn)
-
+		case workers <- struct{}{}:
 			go func() {
+				conn, err := listener.Accept()
+
+				if err != nil {
+					closeConn(conn)
+					<-workers
+					log.Printf("experienced a error trying to establish a connection: %v \n", err)
+				}
+
+				pid := connections.write(conn)
 
 				state, pUser, role := authenticate(server, conn)
 				defer func() {
@@ -197,19 +204,19 @@ func listenerLoop(
 				}
 
 				var pCounter *atomic.Int32
+				var maxConn uint16
 
 				if role == "publisher" {
 					pCounter = &publisherCount
+					maxConn = server.maxPublisherConnections
 				} else if role == "subscriber" {
 					pCounter = &subscriberCount
+					maxConn = server.maxSubscriberConnections
 				}
 
 				lock.Lock()
 
-				cond1 := uint16(publisherCount.Load()) < server.maxPublisherConnections
-				cond2 := uint16(subscriberCount.Load()) < server.maxSubscriberConnections
-
-				if cond1 || cond2 {
+				if uint16(pCounter.Load()) < maxConn {
 					pCounter.Add(1)
 					lock.Unlock()
 				} else {
@@ -221,7 +228,6 @@ func listenerLoop(
 				defer func() {
 					pCounter.Add(-1)
 				}()
-
 			}()
 		}
 	}

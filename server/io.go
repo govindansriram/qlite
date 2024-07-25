@@ -24,21 +24,6 @@ func closeConn(conn net.Conn) {
 	}
 }
 
-func gracefulShutdown(finished chan<- struct{}, connections *uniqueConnections, listener net.Listener) {
-
-	for _, con := range connections.connMap {
-		closeConn(con)
-	}
-
-	err := listener.Close()
-
-	if err != nil {
-		log.Println(err)
-	}
-
-	finished <- struct{}{}
-}
-
 /*
 writeMessage
 
