@@ -281,24 +281,29 @@ func Test_checkPassword(t *testing.T) {
 
 func Test_authenticate(t *testing.T) {
 
-	serv := Server{
-		maxIoSeconds: time.Second * 3,
-		users: []User{
-			{
-				name:       []byte("test"),
-				password:   []byte("test123"),
-				publisher:  true,
-				subscriber: true,
-			},
-			{
-				name:       []byte("test2222"),
-				password:   []byte("test123"),
-				subscriber: true,
-			},
+	users := []User{
+		{
+			name:       []byte("test"),
+			password:   []byte("test123"),
+			publisher:  true,
+			subscriber: true,
+		},
+		{
+			name:       []byte("test2222"),
+			password:   []byte("test123"),
+			subscriber: true,
 		},
 	}
 
 	t.Run("test valid authentication", func(t *testing.T) {
+
+		serv := Server{
+			maxIoSeconds:             time.Second * 3,
+			maxSubscriberConnections: 3,
+			maxPublisherConnections:  3,
+			users:                    users,
+		}
+
 		ts := newTestServer()
 		serverConn, clientConn, err := ts.getServerConn()
 
@@ -314,11 +319,11 @@ func Test_authenticate(t *testing.T) {
 
 		reqChan := make(chan reqState)
 		go func() {
-			alive, pUSer, role := authenticate(serv, serverConn)
+			alive, role, counter := authenticate(&serv, serverConn)
 			reqChan <- reqState{
 				alive,
-				pUSer,
 				role,
+				counter,
 			}
 		}()
 
@@ -373,29 +378,30 @@ func Test_authenticate(t *testing.T) {
 
 		serverState := <-reqChan
 
-		if !bytes.Equal(serverState.user.name, user.name) {
-			t.Error("authenticated the wrong user")
+		if serverState.role != "publisher" {
+			t.Error("authenticated the wrong role")
 			return
 		}
 
-		if serverState.role != "publisher" {
-			t.Error("authenticated the wrong role")
+		if serverState.counter.Load() != 1 {
+			t.Error("counter was not incremented")
 			return
 		}
 
 		if !serverState.isAlive {
 			t.Errorf("server connection closed unexpectedly")
 		}
-
-		_, _ = serverConn.Write([]byte("!test"))
-		_, err = serverConn.Write([]byte("!test"))
-
-		if err != nil {
-			t.Error(err)
-		}
 	})
 
 	t.Run("test invalid username", func(t *testing.T) {
+
+		serv := Server{
+			maxIoSeconds:             time.Second * 3,
+			maxSubscriberConnections: 3,
+			maxPublisherConnections:  3,
+			users:                    users,
+		}
+
 		ts := newTestServer()
 		serverConn, clientConn, err := ts.getServerConn()
 
@@ -411,11 +417,11 @@ func Test_authenticate(t *testing.T) {
 
 		reqChan := make(chan reqState)
 		go func() {
-			alive, pUSer, role := authenticate(serv, serverConn)
+			alive, role, counter := authenticate(&serv, serverConn)
 			reqChan <- reqState{
 				alive,
-				pUSer,
 				role,
+				counter,
 			}
 		}()
 
@@ -467,20 +473,32 @@ func Test_authenticate(t *testing.T) {
 
 		mess = bytes.ToLower(mess)
 
+		serverState := <-reqChan
+
+		if serverState.isAlive {
+			t.Error("connection is open unexpectedly")
+			return
+		}
+
 		if !bytes.Contains(mess, []byte("error")) {
 			t.Error("message is not an error")
 		}
 
-		_, err = clientConn.Read(make([]byte, 10))
-
-		if err == nil {
-			t.Error("connection was not closed")
+		if serverState.counter != nil {
+			t.Error("counter was incremented")
 			return
 		}
 
 	})
 
 	t.Run("test invalid password", func(t *testing.T) {
+		serv := Server{
+			maxIoSeconds:             time.Second * 3,
+			maxSubscriberConnections: 3,
+			maxPublisherConnections:  3,
+			users:                    users,
+		}
+
 		ts := newTestServer()
 		serverConn, clientConn, err := ts.getServerConn()
 
@@ -496,11 +514,11 @@ func Test_authenticate(t *testing.T) {
 
 		reqChan := make(chan reqState)
 		go func() {
-			alive, pUSer, role := authenticate(serv, serverConn)
+			alive, role, counter := authenticate(&serv, serverConn)
 			reqChan <- reqState{
 				alive,
-				pUSer,
 				role,
+				counter,
 			}
 		}()
 
@@ -552,20 +570,32 @@ func Test_authenticate(t *testing.T) {
 
 		mess = bytes.ToLower(mess)
 
+		serverState := <-reqChan
+
+		if serverState.isAlive {
+			t.Error("connection is open unexpectedly")
+			return
+		}
+
 		if !bytes.Contains(mess, []byte("error")) {
 			t.Error("message is not an error")
 		}
 
-		_, err = clientConn.Read(make([]byte, 10))
-
-		if err == nil {
-			t.Error("connection was not closed")
+		if serverState.counter != nil {
+			t.Error("counter was incremented")
 			return
 		}
 
 	})
 
 	t.Run("test invalid role", func(t *testing.T) {
+		serv := Server{
+			maxIoSeconds:             time.Second * 3,
+			maxSubscriberConnections: 3,
+			maxPublisherConnections:  3,
+			users:                    users,
+		}
+
 		ts := newTestServer()
 		serverConn, clientConn, err := ts.getServerConn()
 
@@ -581,11 +611,11 @@ func Test_authenticate(t *testing.T) {
 
 		reqChan := make(chan reqState)
 		go func() {
-			alive, pUSer, role := authenticate(serv, serverConn)
+			alive, role, counter := authenticate(&serv, serverConn)
 			reqChan <- reqState{
 				alive,
-				pUSer,
 				role,
+				counter,
 			}
 		}()
 
@@ -635,14 +665,115 @@ func Test_authenticate(t *testing.T) {
 
 		mess = bytes.ToLower(mess)
 
+		serverState := <-reqChan
+
+		if serverState.isAlive {
+			t.Error("connection is open unexpectedly")
+			return
+		}
+
 		if !bytes.Contains(mess, []byte("error")) {
 			t.Error("message is not an error")
 		}
 
-		_, err = clientConn.Read(make([]byte, 10))
+		if serverState.counter != nil {
+			t.Error("counter was incremented")
+			return
+		}
+	})
 
-		if err == nil {
-			t.Error("connection was not closed")
+	t.Run("test max roles filled", func(t *testing.T) {
+		serv := Server{
+			maxIoSeconds:             time.Second * 3,
+			maxSubscriberConnections: 3,
+			maxPublisherConnections:  3,
+			users:                    users,
+		}
+
+		serv.currentPublisher.Store(3)
+
+		ts := newTestServer()
+		serverConn, clientConn, err := ts.getServerConn()
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		defer func() {
+			_ = serverConn.Close()
+			_ = clientConn.Close()
+			ts.endServer(t)
+		}()
+
+		reqChan := make(chan reqState)
+		go func() {
+			alive, role, counter := authenticate(&serv, serverConn)
+			reqChan <- reqState{
+				alive,
+				role,
+				counter,
+			}
+		}()
+
+		mess, alive := readMessage(clientConn, serv.maxIoSeconds)
+
+		if !alive {
+			t.Error("connection was closed unexpectedly")
+			return
+		}
+
+		splits := bytes.Split(mess, []byte(";"))
+
+		if len(splits) != 2 {
+			t.Errorf("improper message was sent")
+			return
+		}
+
+		user := serv.users[0]
+
+		pAndC := make([]byte, len(user.password)+len(splits[1]))
+
+		copy(pAndC, user.password)
+		copy(pAndC[len(user.password):], splits[1])
+
+		pass, err := bcrypt.GenerateFromPassword(pAndC, bcrypt.DefaultCost)
+
+		if err != nil {
+			t.Errorf("failed to encrypt password")
+			return
+		}
+
+		response := make([]byte, 2+len(user.name)+len(pass))
+
+		response[0] = 0
+		copy(response[1:], user.name)
+		response[len(user.name)+1] = ';'
+		copy(response[len(user.name)+2:], pass)
+
+		alive = writeMessage(clientConn, response, serv.maxIoSeconds)
+
+		if !alive {
+			t.Error("connection was closed unexpectedly")
+			return
+		}
+
+		mess, alive = readMessage(clientConn, serv.maxIoSeconds)
+
+		mess = bytes.ToLower(mess)
+
+		serverState := <-reqChan
+
+		if serverState.isAlive {
+			t.Error("connection is open unexpectedly")
+			return
+		}
+
+		if !bytes.Contains(mess, []byte("error")) {
+			t.Error("message is not an error")
+		}
+
+		if serverState.counter != nil {
+			t.Error("counter was incremented")
 			return
 		}
 	})

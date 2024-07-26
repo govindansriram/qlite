@@ -108,6 +108,9 @@ type Server struct {
 	maxMessageSize           uint32        // the max size a message can be
 	maxIoSeconds             time.Duration // how much time can be spent waiting for IO messages to complete
 	pollingTimeSeconds       time.Duration // how long to poll the queue for a response
+	lock                     sync.Mutex
+	currentPublisher         atomic.Int32
+	currentSubscribers       atomic.Int32
 }
 
 func NewServer(
@@ -168,7 +171,7 @@ func NewServer(
 	}, nil
 }
 
-func (s Server) Start(kill <-chan struct{}) {
+func (s *Server) Start(kill <-chan struct{}) {
 	server := fmt.Sprintf("localhost:%d", s.port)
 	listener, err := net.Listen("tcp", server)
 
@@ -198,7 +201,7 @@ func (s Server) Start(kill <-chan struct{}) {
 
 func listenerLoop(
 	finished <-chan struct{},
-	server Server,
+	server *Server,
 	listener net.Listener,
 ) {
 	connections := newUniqueConnections(server.maxPublisherConnections + server.maxSubscriberConnections)
@@ -210,9 +213,6 @@ func listenerLoop(
 
 	workers := make(chan struct{}, server.maxPublisherConnections+server.maxSubscriberConnections)
 	q := queue.NewQueue(server.maxMessages, server.maxMessageSize)
-	var publisherCount atomic.Int32
-	var subscriberCount atomic.Int32
-	lock := sync.Mutex{}
 
 	for {
 		select {
@@ -230,7 +230,7 @@ func listenerLoop(
 
 				pid := connections.write(conn)
 
-				state, pUser, role := authenticate(server, conn)
+				state, role, pCounter := authenticate(server, conn)
 				defer func() {
 					closeConn(conn)
 					connections.remove(pid)
@@ -238,29 +238,6 @@ func listenerLoop(
 				}()
 
 				if !state {
-					return
-				}
-
-				var pCounter *atomic.Int32
-				var maxConn uint16
-
-				if role == "publisher" {
-					pCounter = &publisherCount
-					maxConn = server.maxPublisherConnections
-				} else if role == "subscriber" {
-					pCounter = &subscriberCount
-					maxConn = server.maxSubscriberConnections
-				}
-
-				lock.Lock()
-
-				if uint16(pCounter.Load()) < maxConn {
-					pCounter.Add(1)
-					lock.Unlock()
-				} else {
-					lock.Unlock()
-					fmt.Println("im full")
-					connectionFull(*pUser, conn, server.maxIoSeconds)
 					return
 				}
 

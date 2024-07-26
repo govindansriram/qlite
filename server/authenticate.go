@@ -33,9 +33,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"net"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -143,10 +146,43 @@ func checkPassword(password []byte, challenge [16]byte, provided []byte) bool {
 	return true
 }
 
+func checkSpace(
+	role string,
+	pubCount *atomic.Int32,
+	maxPubCount uint16,
+	subCount *atomic.Int32,
+	maxSubCount uint16,
+	lock *sync.Mutex) (*atomic.Int32, error) {
+
+	var pCounter *atomic.Int32
+	var maxUsers uint16
+
+	if role == "publisher" {
+		pCounter = pubCount
+		maxUsers = maxPubCount
+	} else if role == "subscriber" {
+		pCounter = subCount
+		maxUsers = maxSubCount
+	} else {
+		panic(fmt.Sprintf("invalid role provided: %s", role))
+	}
+
+	lock.Lock()
+	defer lock.Unlock()
+	currentCount := uint16(pCounter.Load())
+
+	if currentCount >= maxUsers {
+		return nil, fmt.Errorf("error: the max amount of %ss have already been connected", role)
+	}
+
+	pCounter.Add(1)
+	return pCounter, nil
+}
+
 type reqState struct {
 	isAlive bool
-	user    *User
 	role    string
+	counter *atomic.Int32
 }
 
 /*
@@ -154,7 +190,7 @@ authenticate
 
 checks if a connection has valid credentials to maintain a connection
 */
-func authenticate(serv Server, conn net.Conn) (alive bool, user *User, role string) {
+func authenticate(serv *Server, conn net.Conn) (alive bool, role string, counter *atomic.Int32) {
 
 	response := make(chan reqState)
 
@@ -199,6 +235,20 @@ func authenticate(serv Server, conn net.Conn) (alive bool, user *User, role stri
 			return
 		}
 
+		pCounter, err := checkSpace(
+			userRole,
+			&serv.currentPublisher,
+			serv.maxPublisherConnections,
+			&serv.currentSubscribers,
+			serv.maxSubscriberConnections,
+			&serv.lock)
+
+		if err != nil {
+			writeCriticalError(conn, err, serv.maxIoSeconds)
+			response <- reqState{}
+			return
+		}
+
 		state = writeMessage(conn, []byte("PASS;"), serv.maxIoSeconds)
 
 		if !state {
@@ -208,8 +258,8 @@ func authenticate(serv Server, conn net.Conn) (alive bool, user *User, role stri
 
 		response <- reqState{
 			true,
-			pUser,
 			userRole,
+			pCounter,
 		}
 	}()
 
@@ -218,8 +268,8 @@ func authenticate(serv Server, conn net.Conn) (alive bool, user *User, role stri
 
 	select {
 	case <-ctx.Done():
-		return false, nil, ""
+		return false, "", nil
 	case resp := <-response:
-		return resp.isAlive, resp.user, resp.role
+		return resp.isAlive, resp.role, resp.counter
 	}
 }

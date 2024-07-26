@@ -179,22 +179,6 @@ func readMessage(conn net.Conn, deadline time.Duration) (message []byte, alive b
 	return fullMessage, true
 }
 
-func connectionFull(
-	user User,
-	conn net.Conn,
-	deadline time.Duration) {
-
-	name := func() string {
-		if user.publisher {
-			return "publisher"
-		}
-		return "subscriber"
-	}
-
-	err := fmt.Errorf("error: could not establish connection since %s limit has been reached", name())
-	writeCriticalError(conn, err, deadline)
-}
-
 /*
 writeCriticalError
 
@@ -202,7 +186,6 @@ writes an error and closes the connection
 */
 func writeCriticalError(conn net.Conn, err error, deadline time.Duration) {
 	if writeError(conn, err, deadline) {
-		fmt.Println("wrote error", err)
 		closeConn(conn)
 	}
 }

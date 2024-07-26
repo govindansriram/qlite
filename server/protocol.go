@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func receiveRequests(conn net.Conn, server Server, q *queue.Queue, role string) {
+func receiveRequests(conn net.Conn, server *Server, q *queue.Queue, role string) {
 	for {
 		message, alive := readMessage(conn, server.maxIoSeconds)
 

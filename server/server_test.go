@@ -307,7 +307,7 @@ func Test_listenerLoop(t *testing.T) {
 			users,
 			8080,
 			5,
-			5,
+			3,
 			100,
 			10_000,
 			5,
@@ -324,7 +324,7 @@ func Test_listenerLoop(t *testing.T) {
 		}()
 
 		go func() {
-			listenerLoop(kChan, *server, list)
+			listenerLoop(kChan, server, list)
 		}()
 
 		var conn net.Conn
@@ -364,8 +364,9 @@ func Test_listenerLoop(t *testing.T) {
 						error: err,
 					}
 				} else {
+					err := testAuthenticate(conn, server.maxIoSeconds, users[0], "publisher")
 					connChan <- conStruct{
-						conn: conn,
+						error: err,
 					}
 				}
 			}()
@@ -376,12 +377,20 @@ func Test_listenerLoop(t *testing.T) {
 			close(connChan)
 		}()
 
+		var errCount uint8
+		var lastError error
+
 		for cn := range connChan {
+
 			if cn.error != nil {
-				t.Error(cn.error)
+				errCount++
+				lastError = cn.error
+			}
+
+			if errCount > 1 {
+				t.Error(lastError)
 				return
 			}
-			fmt.Println("here", testAuthenticate(cn.conn, server.maxIoSeconds, users[0], "publisher"))
 		}
 	})
 }

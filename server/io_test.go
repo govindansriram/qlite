@@ -416,7 +416,7 @@ func Test_readMessageLength(t *testing.T) {
 
 		duration := time.Second * 3
 		message := make([]byte, 10*MB+1)
-		for index, _ := range message {
+		for index := range message {
 			message[index] = 0
 		}
 
