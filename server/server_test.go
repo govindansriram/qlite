@@ -2,10 +2,12 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"log"
+	"math/rand/v2"
 	"net"
 	"sync"
 	"testing"
@@ -215,16 +217,17 @@ func testAuthenticate(
 		return errors.New("connection was closed unexpectedly")
 	}
 
-	splits := bytes.Split(mess, []byte(";"))
+	_, after, found := bytes.Cut(mess, []byte(";"))
 
-	if len(splits) != 2 {
+	if !found {
+		fmt.Println("the improper message is", string(mess))
 		return errors.New("improper message was sent")
 	}
 
-	pAndC := make([]byte, len(user.password)+len(splits[1]))
+	pAndC := make([]byte, len(user.password)+len(after))
 
 	copy(pAndC, user.password)
-	copy(pAndC[len(user.password):], splits[1])
+	copy(pAndC[len(user.password):], after)
 
 	pass, err := bcrypt.GenerateFromPassword(pAndC, bcrypt.DefaultCost)
 
@@ -393,4 +396,232 @@ func Test_listenerLoop(t *testing.T) {
 			}
 		}
 	})
+}
+
+func PushRandomData(conn net.Conn, maxIo time.Duration) (bool, error) {
+	randTime := rand.IntN(20)
+	time.Sleep(time.Millisecond * time.Duration(randTime))
+
+	byteSlice := make([]byte, (randTime+1)*100)
+
+	for idx := range (randTime + 1) * 100 {
+		byteSlice[idx] = 'a'
+	}
+
+	messageSlice := make([]byte, 5+len(byteSlice))
+
+	copy(messageSlice, "PUSH;")
+	copy(messageSlice[5:], byteSlice)
+
+	alive := writeMessage(conn, messageSlice, maxIo)
+
+	if !alive {
+		return false, errors.New("connection expired unexpectedly")
+	}
+
+	mess, alive := readMessage(conn, maxIo)
+
+	if !alive {
+		return false, errors.New("connection expired unexpectedly")
+	}
+
+	bs := bytes.Split(mess, []byte(";"))
+
+	if bytes.Equal(bs[0], []byte("PASS")) {
+		return true, nil
+	} else {
+		return false, nil
+	}
+}
+
+func publisher(conn net.Conn, maxIo time.Duration) error {
+	messages := 20
+
+	for messages != 0 {
+		popped, err := PushRandomData(conn, maxIo)
+
+		if err != nil {
+			return err
+		}
+
+		if popped {
+			messages--
+		}
+	}
+
+	fmt.Println("closed the connection")
+	closeConn(conn)
+	return nil
+}
+
+func runPublishers(
+	maxPublishers int,
+	maxIo time.Duration,
+	killCh <-chan struct{},
+	errChan chan<- error,
+	usr User) {
+	maxPubs := make(chan struct{}, maxPublishers)
+
+	alive := true
+	for alive {
+		select {
+		case <-killCh:
+			alive = false
+		case maxPubs <- struct{}{}:
+			go func() {
+				ctx, cf := context.WithDeadline(context.Background(), time.Now().Add(time.Second*3))
+				var conn net.Conn
+				var err error
+
+				defer func() {
+					cf()
+					<-maxPubs
+				}()
+
+				stay := true
+				for stay {
+					select {
+					case <-ctx.Done():
+						errChan <- ctx.Err()
+						return
+					default:
+						network := fmt.Sprintf("localhost:%d", 8080)
+						conn, err = net.Dial("tcp", network)
+						if err == nil {
+							stay = false
+						}
+						err = testAuthenticate(conn, maxIo, usr, "publisher")
+						if err != nil {
+							fmt.Println("error caught here 2")
+							errChan <- err
+						}
+					}
+				}
+
+				err = publisher(conn, maxIo)
+				if err != nil {
+					fmt.Println("error caught here 3")
+					errChan <- err
+				}
+			}()
+		}
+	}
+}
+
+func Test_Server(t *testing.T) {
+	list, err := getListener()
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	defer func() {
+		err = list.Close()
+		log.Println(err)
+	}()
+
+	u1, err := NewUser("publisher", "test", true, false)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	u2, err := NewUser("subscriber", "test", false, true)
+
+	if err != nil {
+		t.Error(err)
+	}
+
+	users := []User{
+		*u1, *u2,
+	}
+
+	server, err := NewServer(
+		users,
+		8080,
+		10,
+		20,
+		3000,
+		10_000,
+		5,
+		10)
+
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	finishedListener := make(chan struct{})
+	finsihedPublisher := make(chan struct{})
+	errChan := make(chan error)
+
+	go func() {
+		err := <-errChan
+		t.Error(err)
+		finsihedPublisher <- struct{}{}
+		finishedListener <- struct{}{}
+	}()
+
+	go func() {
+		listenerLoop(finishedListener, server, list)
+	}()
+
+	ext := true
+	var lenCon net.Conn
+
+	for ext {
+		network := fmt.Sprintf("localhost:%d", 8080)
+		lenCon, err = net.Dial("tcp", network)
+		if err == nil {
+			ext = false
+		}
+	}
+
+	err = testAuthenticate(lenCon, server.maxIoSeconds, users[0], "publisher")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		runPublishers(int(server.maxPublisherConnections-1), server.maxIoSeconds, finsihedPublisher, errChan, users[0])
+	}()
+
+	ctx, can := context.WithDeadline(context.Background(), time.Now().Add(10*time.Second))
+	defer can()
+	lve := true
+	for lve {
+		mess := []byte("LEN;")
+		select {
+		case <-ctx.Done():
+			finsihedPublisher <- struct{}{}
+			finishedListener <- struct{}{}
+			return
+		default:
+			isAlive := writeMessage(lenCon, mess, server.maxIoSeconds)
+
+			if !isAlive {
+				lve = false
+				continue
+			}
+
+			mess, isAlive = readMessage(lenCon, server.maxIoSeconds)
+
+			if !isAlive {
+				fmt.Println("exited check 1")
+				lve = false
+			}
+
+			before, after, found := bytes.Cut(mess, []byte(";"))
+
+			if !found {
+				fmt.Println("the mess is", string(before), string(after))
+				fmt.Println("exited check 2")
+				lve = false
+				continue
+			}
+
+			//fmt.Println(binary.LittleEndian.Uint32(after))
+		}
+	}
+	fmt.Println("exited length function")
 }
