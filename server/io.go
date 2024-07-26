@@ -202,6 +202,7 @@ writes an error and closes the connection
 */
 func writeCriticalError(conn net.Conn, err error, deadline time.Duration) {
 	if writeError(conn, err, deadline) {
+		fmt.Println("wrote error", err)
 		closeConn(conn)
 	}
 }

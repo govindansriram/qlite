@@ -1,6 +1,11 @@
 package server
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
+	"golang.org/x/crypto/bcrypt"
+	"log"
 	"net"
 	"sync"
 	"testing"
@@ -185,4 +190,198 @@ func TestNewUser(t *testing.T) {
 			}
 		})
 	}
+}
+
+func getListener() (net.Listener, error) {
+	const network uint16 = 8080
+	server := fmt.Sprintf("localhost:%d", network)
+	listener, err := net.Listen("tcp", server)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return listener, err
+}
+
+func testAuthenticate(
+	clientConn net.Conn,
+	maxIo time.Duration,
+	user User,
+	role string) error {
+	mess, alive := readMessage(clientConn, maxIo)
+
+	if !alive {
+		return errors.New("connection was closed unexpectedly")
+	}
+
+	splits := bytes.Split(mess, []byte(";"))
+
+	if len(splits) != 2 {
+		return errors.New("improper message was sent")
+	}
+
+	pAndC := make([]byte, len(user.password)+len(splits[1]))
+
+	copy(pAndC, user.password)
+	copy(pAndC[len(user.password):], splits[1])
+
+	pass, err := bcrypt.GenerateFromPassword(pAndC, bcrypt.DefaultCost)
+
+	if err != nil {
+		return errors.New("failed to encrypt password")
+	}
+
+	response := make([]byte, 2+len(user.name)+len(pass))
+
+	if role == "publisher" {
+		response[0] = 0
+	} else {
+		response[0] = 1
+	}
+
+	copy(response[1:], user.name)
+	response[len(user.name)+1] = ';'
+	copy(response[len(user.name)+2:], pass)
+
+	alive = writeMessage(clientConn, response, maxIo)
+
+	if !alive {
+		return errors.New("connection was closed on write")
+	}
+
+	mess, alive = readMessage(clientConn, maxIo)
+
+	if !alive {
+		return errors.New("connection was closed on read")
+	}
+
+	data := bytes.Split(mess, []byte(";"))
+
+	if len(data) == 0 {
+		return errors.New("invalid response received")
+	}
+
+	if bytes.Equal(data[0], []byte("FAIL")) {
+		if len(data) == 2 {
+			return errors.New(string(data[1]))
+		} else {
+			return errors.New("could not parse message")
+		}
+	}
+
+	return nil
+}
+
+func Test_listenerLoop(t *testing.T) {
+
+	t.Run("standard test", func(t *testing.T) {
+		list, err := getListener()
+
+		if err != nil {
+			t.Error(err)
+		}
+
+		defer func() {
+			err = list.Close()
+			log.Println(err)
+		}()
+
+		u1, err := NewUser("publisher", "test", true, false)
+
+		if err != nil {
+			t.Error(err)
+		}
+
+		u2, err := NewUser("subscriber", "test", false, true)
+
+		if err != nil {
+			t.Error(err)
+		}
+
+		users := []User{
+			*u1, *u2,
+		}
+
+		server, err := NewServer(
+			users,
+			8080,
+			5,
+			5,
+			100,
+			10_000,
+			5,
+			10)
+
+		if err != nil {
+			t.Error(err)
+		}
+
+		kChan := make(chan struct{})
+
+		defer func() {
+			kChan <- struct{}{}
+		}()
+
+		go func() {
+			listenerLoop(kChan, *server, list)
+		}()
+
+		var conn net.Conn
+		for range server.maxSubscriberConnections {
+			network := fmt.Sprintf("localhost:%d", 8080)
+			conn, err = net.Dial("tcp", network)
+
+			if err == nil {
+				break
+			}
+		}
+
+		err = testAuthenticate(conn, server.maxIoSeconds, users[0], "publisher")
+
+		if err != nil {
+			t.Error(err)
+			return
+		}
+
+		type conStruct struct {
+			error error
+			conn  net.Conn
+		}
+
+		connChan := make(chan conStruct)
+		wg := sync.WaitGroup{}
+
+		for range server.maxPublisherConnections {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				network := fmt.Sprintf("localhost:%d", 8080)
+				conn, err = net.Dial("tcp", network)
+
+				if err != nil {
+					connChan <- conStruct{
+						error: err,
+					}
+				} else {
+					connChan <- conStruct{
+						conn: conn,
+					}
+				}
+			}()
+		}
+
+		go func() {
+			wg.Wait()
+			close(connChan)
+		}()
+
+		for cn := range connChan {
+			if cn.error != nil {
+				t.Error(cn.error)
+				return
+			}
+			fmt.Println("here", testAuthenticate(cn.conn, server.maxIoSeconds, users[0], "publisher"))
+		}
+	})
 }

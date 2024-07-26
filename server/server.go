@@ -223,9 +223,9 @@ func listenerLoop(
 				conn, err := listener.Accept()
 
 				if err != nil {
-					closeConn(conn)
 					<-workers
 					log.Printf("experienced a error trying to establish a connection: %v \n", err)
+					return
 				}
 
 				pid := connections.write(conn)
@@ -259,6 +259,7 @@ func listenerLoop(
 					lock.Unlock()
 				} else {
 					lock.Unlock()
+					fmt.Println("im full")
 					connectionFull(*pUser, conn, server.maxIoSeconds)
 					return
 				}
