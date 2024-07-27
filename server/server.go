@@ -101,6 +101,7 @@ func NewUser(name, password string, publisher, subscriber bool) (*User, error) {
 
 type Server struct {
 	users                    []User        // the users that can establish connections
+	address                  string        // the ip address of the server
 	port                     uint16        // the port the server will run on
 	maxSubscriberConnections uint16        // the max amount of subscriber connections
 	maxPublisherConnections  uint16        // the max amount of publisher connections
@@ -121,7 +122,8 @@ func NewServer(
 	maxMess uint32,
 	maxMessSize uint32,
 	maxIoTimeSeconds uint16,
-	maxPollingTimeSeconds uint16) (*Server, error) {
+	maxPollingTimeSeconds uint16,
+	address string) (*Server, error) {
 
 	if len(users) == 0 {
 		return nil, errors.New("no users are present for connection")
@@ -159,6 +161,10 @@ func NewServer(
 		maxPollingTimeSeconds = 10
 	}
 
+	if address == "" {
+		address = "localhost"
+	}
+
 	return &Server{
 		users:                    users,
 		port:                     port,
@@ -172,7 +178,7 @@ func NewServer(
 }
 
 func (s *Server) Start(kill <-chan struct{}) {
-	server := fmt.Sprintf("localhost:%d", s.port)
+	server := fmt.Sprintf("%s:%d", s.address, s.port)
 	listener, err := net.Listen("tcp", server)
 
 	if err != nil {

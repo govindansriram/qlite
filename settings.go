@@ -18,6 +18,7 @@ type user struct {
 type serverSettings struct {
 	Users                    []user `yaml:"users"`
 	Port                     uint16 `yaml:"port"`
+	Address                  string `yaml:"address"`
 	MaxSubscriberConnections uint16 `yaml:"maxSubscriberConnections"`
 	MaxPublisherConnections  uint16 `yaml:"maxPublisherConnections"`
 	MaxMessages              uint32 `yaml:"maxMessages"`
@@ -47,7 +48,8 @@ func (s *serverSettings) build() (*server.Server, error) {
 		s.MaxMessages,
 		s.MaxMessageSize,
 		s.MaxIoTimeSeconds,
-		s.MaxPollingTimeSeconds)
+		s.MaxPollingTimeSeconds,
+		s.Address)
 
 	if err != nil {
 		return nil, err
