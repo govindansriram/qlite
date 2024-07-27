@@ -1,6 +1,6 @@
-FROM ubuntu:oracular-20240617
+FROM alpine:latest
 
-RUN apt-get update
+RUN apk update && apk upgrade
 
 WORKDIR /app
 

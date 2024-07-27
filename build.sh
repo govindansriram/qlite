@@ -1,5 +1,5 @@
 export GOOS=linux
 export GOARCH=amd64
-go build .
+CGO_ENABLED=0 go build .
 
 docker build -t qlite:latest .

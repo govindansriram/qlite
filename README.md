@@ -1,61 +1,120 @@
-# qlite
-
+![qlite logo](/images/qlite.svg)
 ## About
 
 qlite is a light weight in memory message queue that is intended to hold long-running http requests for asynchronous 
 processing. Due to its lightweight nature it is intended to be tightly coupled to the ingesting application. 
 DO NOT USE qlite for large scale message handling.
 
-## Settings
+## Install
 
+### Docker
+```shell
+docker pull sgovindan/qlite:latest
+
+docker run -d -p 8080:8080 qlite:latest
+```
+
+### Build from source
+
+Requirements:
+- GO version >= 1.22.1
+
+```shell
+git clone https://github.com/govindansriram/qlite.git
+cd qlite
+go build .
+
+## start the server
+
+./qlite start path/to/the/config.yaml
+```
+
+## Settings
 Settings must be specified in a config.yaml file.
 
-Settings include:
-
 ### users (list)
-A list of users that have permissions to access the queue.
+credentials & settings needed to establish a connection
 
-#### name (string)
-The username of the user
-
-#### password (string)
-The password of the user
-
-#### publisher (bool) default false
-If true user can write messages to the queue
-
-#### subscriber (bool) default false
-If true user can read messages from the queue
-
-### port (uint16) default 8080
-The port the server will be run on
-
-### maxSubscriberConnections (uint16) default 1
-The amount of subscribers that can be connected to the server
-
-### maxPublisherConnections (uint16) default 1
-The amount of publishers that can be connected to the server
-
-### maxMessages (uint32) default 100
-The max amount of messages that can be in the queue at once
-
+1) name (string): The username of the user
+2) password (string): The password of the user
+3) publisher (bool) default false: If true user can write messages to the queue
+4) subscriber (bool) default false: If true user can read messages from the queue
 
 ```yaml
 users:
-   - name: user1
-     password: mypassword
+ - name: pub
+   password: publisher
+   publisher: true
+   subscriber: false
+```
+
+### port (uint16) default 8080
+the port the tcp server will be exposed
+```yaml
+port: 5000
+```
+
+### address (string) default localhost
+the address that can be used for communication
+```yaml
+address: 0.0.0.0
+```
+
+### maxSubscriberConnections (uint16) default 2
+The amount of subscribers that can be connected to the server
+```yaml
+maxSubscriberConnections: 10
+```
+
+### maxPublisherConnections (uint16) default 1
+The amount of publishers that can be connected to the server
+```yaml
+maxPublisherConnections: 10
+```
+
+### maxMessages (uint32) default 100
+The max amount of messages that can be in the queue at once
+```yaml
+maxMessages: 10
+```
+
+### maxMessageSize (uint32) default 9437184
+The max size of a message in the queue
+```yaml
+maxMessageSize: 1000
+```
+
+### maxIoTimeSeconds (uint32) default 3
+The max amount of time waiting for a read or write on a connection to succeed
+```yaml
+maxIoTimeSeconds: 1000
+```
+
+### maxPollingTimeSeconds (uint32) default 10
+The max amount of time to wait for LPOP to receive a response from the queue
+```yaml
+maxIoTimeSeconds: 1000
+```
+
+## docker YAML config
+```yaml
+users:
+   - name: pub
+     password: publisher
      publisher: true
-     subscriber: false
-     
-   - name: user2
-     password: mypassword2
-     publisher: false
+
+   - name: sub
+     password: subscriber
      subscriber: true
-     
+
 port: 8080
-maxSubscriberConnections: 2
-maxPublisherConnections: 2
+maxSubscriberConnections: 5
+maxPublisherConnections: 10
 maxMessages: 1000
+maxMessageSize: 10000
+maxIoTimeSeconds: 5
+maxPollingTimeSeconds: 10
+address: 0.0.0.0
 ```
 
 ## Communication
@@ -82,15 +141,16 @@ sent. The size should be an uint32 number in little endian format
     - finally the password + challenge should be encrypted using the bcrypt algorithm for 10 rounds
 4) if we are able to maintain a connection expect to receive message with the following structure 
    - first 4 bytes will hold the content length of the following message
-   - following bytes will contain the ascii encoded message pass 
+   - following bytes will contain the ascii encoded message PASS followed by semicolon 
 5) Otherwise, expect to receive an error message structured as such 
    - first 4 bytes will hold the content length of the following message
-   - ascii encoded error string
+   - then ascii encoded FAIL;
+   - then the error message
    - The connection will also automatically close
 
 ## Protocol Request
 
-The first 4 bytes of every message are an uint32 segment detailing the size of the message (excluding these byte)
+The first 4 bytes of every message are an uint32 segment detailing the size of the message
 
 After that the ascii name for one of 4 different functions should be present followed by a semicolon these are:
 1) PUSH: push to the queue can only be done by publishers 
@@ -113,7 +173,7 @@ No data is required after the semicolon
 
 ## Protocol response
 
-The first 4 bytes of every message are an uint32 segment detailing the size of the message (excluding these byte)
+The first 4 bytes of every message are an uint32 segment detailing the size of the message
 Following the message length, will be the ascii encoded string PASS or FAIL delimited by a semicolon
 
 ### PUSH
@@ -129,5 +189,5 @@ Following the message length, will be the ascii encoded string PASS or FAIL deli
 - FAIL: an error message
 
 ### LEN
-- PASS: how many messages are left on the queue as a little endian uint32 number
+- PASS: how many messages are in the queue as a little endian uint32 number
 - FAIL: an error message
