@@ -48,7 +48,7 @@ func TestQueue_Pop(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, err := q.Pop()
+				_, err := q.StartPop()
 
 				if err != nil {
 					t.Error(err)
@@ -75,7 +75,7 @@ func TestQueue_Pop(t *testing.T) {
 		q.readPos.Store(0)
 		q.writePos.Store(0)
 
-		if _, err := q.Pop(); err == nil {
+		if _, err := q.StartPop(); err == nil {
 			t.Error("popped from empty queue")
 		}
 	})
@@ -209,7 +209,7 @@ func TestQueue_All(t *testing.T) {
 	failedChan := make(chan struct{})
 
 	popper := func() {
-		data, err := queue.Pop()
+		data, err := queue.StartPop()
 		if err == nil {
 			dataChan <- data
 		} else {

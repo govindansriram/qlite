@@ -23,8 +23,13 @@ type Queue struct {
 	lock           sync.Mutex
 	maxMessages    uint32
 	maxMessageSize uint32
-	readPos        atomic.Int32
-	writePos       atomic.Int32
+	readPos        atomic.Int32 // the index that can be popped
+	unstagedPos    atomic.Int32
+	/*
+		everything between the readPos and unstagedPos is a pop that has not been
+		commited
+	*/
+	writePos atomic.Int32 // the index which can be written too
 }
 
 /*
@@ -62,23 +67,32 @@ func NewQueue(maxMessCount uint32, maxMessSize uint32) Queue {
 /*
 Len
 
-gets the length of the queue
+the amount of data in the queue including unstaged data
 */
 func (q *Queue) Len() int32 {
-	return q.writePos.Load() - q.readPos.Load()
+	return q.writePos.Load() - q.unstagedPos.Load()
 }
 
 /*
-Pop
+len
+
+the amount of staged data in the queue
+*/
+func (q *Queue) len() int32 {
+	return q.writePos.Load() - q.unstagedPos.Load()
+}
+
+/*
+StartPop
 
 removes the first element from the Queue
 */
-func (q *Queue) Pop() ([]byte, error) {
+func (q *Queue) StartPop() ([]byte, error) {
 	isNil(q.backingSlice)
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
-	if q.Len() == 0 {
+	if q.len() == 0 {
 		return nil, errors.New("cannot pop from empty slice")
 	}
 
@@ -92,20 +106,36 @@ func (q *Queue) Pop() ([]byte, error) {
 }
 
 /*
-Push
+CommitPop
 
-appends an element to the end of the Queue, returns the position of the element in the queue
+dequeues the data from the queue if the popped data was received
 */
-func (q *Queue) Push(message []byte) (uint32, error) {
+func (q *Queue) CommitPop() {
 	isNil(q.backingSlice)
-
-	if len(message) == 0 {
-		panic("message is empty")
-	}
-
 	q.lock.Lock()
 	defer q.lock.Unlock()
+	q.unstagedPos.Add(1)
+}
 
+/*
+RollbackPop
+
+appends the popped data to the end of the queue if the client never received the popped data
+*/
+func (q *Queue) RollbackPop(message []byte) {
+	isNil(q.backingSlice)
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	q.unstagedPos.Add(1)
+
+	_, err := q.push(message)
+
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (q *Queue) push(message []byte) (uint32, error) {
 	if q.Len() >= int32(q.maxMessages) {
 		return 0, errors.New("queue is full")
 	}
@@ -143,6 +173,24 @@ func (q *Queue) Push(message []byte) (uint32, error) {
 }
 
 /*
+Push
+
+appends an element to the end of the Queue, returns the position of the element in the queue
+*/
+func (q *Queue) Push(message []byte) (uint32, error) {
+	isNil(q.backingSlice)
+
+	if len(message) == 0 {
+		panic("message is empty")
+	}
+
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	return q.push(message)
+}
+
+/*
 adjust
 
 as Pop's occur the indexes that have been popped will be marked as empty. Since pops are sequential we can assume
@@ -153,38 +201,28 @@ adjust ensures that values that have not been popped are shifted back to the fro
 func (q *Queue) adjust() {
 	isNil(q.backingSlice)
 
-	var startingPos = -1
+	unstagedPos := q.unstagedPos.Load()
+	readPos := q.readPos.Load()
+
+	if unstagedPos == int32(len(q.backingSlice)) { // queue is completely empty
+		q.unstagedPos.Store(0)
+		q.writePos.Store(0)
+		q.readPos.Store(0)
+	}
+
+	if readPos == 0 { // queue is completely full
+		return
+	}
+
 	index := 0
-
-	for index < len(q.backingSlice) {
-		messLen := len(q.backingSlice[index])
-
-		if index == 0 && messLen > 0 {
-			// there are no empty spaces in the slice
-			return
-		}
-
-		if messLen > 0 {
-			startingPos = index
-			break
-		}
-
-		index++
-	}
-
-	if startingPos == -1 {
-		// entire slice is empty
-		startingPos = index
-	}
-
-	index = 0
 	// shift non popped data back to the front
-	for i := startingPos; i < len(q.backingSlice); i++ {
+	for i := unstagedPos; i < int32(len(q.backingSlice)); i++ {
 		q.backingSlice[index] = q.backingSlice[i]
 		q.backingSlice[i] = []byte{}
 		index++
 	}
 
 	q.writePos.Store(int32(index))
-	q.readPos.Store(0)
+	q.unstagedPos.Store(0)
+	q.writePos.Store(readPos - unstagedPos)
 }
