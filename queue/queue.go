@@ -135,6 +135,11 @@ func (q *Queue) RollbackPop(message []byte) {
 	}
 }
 
+/*
+push
+
+appends an element to the end of the queue, otherwise space in the array is reclaimed or added
+*/
 func (q *Queue) push(message []byte) (uint32, error) {
 	if q.Len() >= int32(q.maxMessages) {
 		return 0, errors.New("queue is full")

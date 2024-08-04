@@ -131,7 +131,7 @@ pops the first element off the queue
 */
 func handleShortPop(conn net.Conn, q *queue.Queue, deadline time.Duration) bool {
 
-	message, err := q.Pop()
+	message, err := q.StartPop()
 
 	if err != nil {
 		if !writeError(conn, err, deadline) {
@@ -163,7 +163,7 @@ func handleLongPop(conn net.Conn, q *queue.Queue, deadline time.Duration, pollin
 
 	go func() {
 		for { // read from the queue until the queue pops or a stop signal is received
-			message, err := q.Pop()
+			message, err := q.StartPop()
 			mess := packet{err: err, message: message}
 
 			select {
