@@ -1,83 +1,256 @@
 package queue
 
 import (
-	"log"
-	"math/rand/v2"
 	"sync"
 	"testing"
 )
 
-func createRandomData(size uint32) []byte {
-	length := rand.IntN(int(size)) + 1
-	message := make([]byte, length)
+const concurrent = 100_000
 
-	for pos := range message {
-		message[pos] = 'a'
-	}
-
-	return message
-}
-
-func createFixedData(size uint32) []byte {
-	message := make([]byte, size)
-
-	for pos := range message {
-		message[pos] = 'a'
-	}
-
-	return message
-}
-
-func concurrentPush(q *Queue, messages [][]byte) {
-
+func BenchmarkBuffChan(b *testing.B) {
 	wg := sync.WaitGroup{}
+	dataArr := generateData(concurrent)
+	qs := make([]*BuffChan, 0, b.N)
 
-	for _, mess := range messages {
-		wg.Add(1)
+	for i := 0; i < b.N; i++ {
+		q := NewBuffChan()
 
-		go func() {
-			_, err := q.Push(mess)
-			if err != nil {
-				log.Print(err)
+		b.Run("test concurrent writes", func(b *testing.B) {
+			for _, data := range dataArr {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					q.Enqueue(data)
+				}()
 			}
-			defer wg.Done()
-		}()
+
+			wg.Wait()
+		})
+
+		qs = append(qs, q)
 	}
 
-	wg.Wait()
+	for i := 0; i < b.N; i++ {
+		q := qs[i]
+		b.Run("test concurrent reads", func(b *testing.B) {
+			for range dataArr {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_, _ = q.Dequeue()
+				}()
+			}
+
+			wg.Wait()
+		})
+	}
 }
 
-func BenchmarkQueue_Push(b *testing.B) {
+func BenchmarkNewBuffChan_RW(b *testing.B) {
+	dataArr := generateData(concurrent)
 
-	b.Run("random message size", func(b *testing.B) {
-		const messageCount = 1000
-		const size = MB * 8
-
-		messages := make([][]byte, messageCount)
-
-		for i := range messageCount {
-			messages[i] = createRandomData(size)
-		}
+	b.Run("test concurrent writes", func(b *testing.B) {
 
 		for i := 0; i < b.N; i++ {
-			q := NewQueue(messageCount, 8*MB)
-			concurrentPush(&q, messages)
+			q := NewBuffChan()
+			stopChan1 := make(chan struct{})
+			stopChan2 := make(chan struct{})
+			go func() {
+				wg := sync.WaitGroup{}
+				for _, data := range dataArr {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						q.Enqueue(data)
+					}()
+				}
+
+				wg.Wait()
+				stopChan1 <- struct{}{}
+			}()
+
+			go func() {
+				wg := sync.WaitGroup{}
+				for range dataArr {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						q.Dequeue()
+					}()
+
+					wg.Wait()
+				}
+
+				stopChan2 <- struct{}{}
+			}()
+
+			<-stopChan1
+			<-stopChan2
+		}
+
+	})
+}
+
+func BenchmarkNewLinkedQueue_RW(b *testing.B) {
+	dataArr := generateData(concurrent)
+
+	b.Run("test concurrent writes", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			q := LinkedQueue{}
+			stopChan1 := make(chan struct{})
+			stopChan2 := make(chan struct{})
+			go func() {
+				wg := sync.WaitGroup{}
+				for _, data := range dataArr {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						q.Enqueue(data)
+					}()
+				}
+
+				wg.Wait()
+				stopChan1 <- struct{}{}
+			}()
+
+			go func() {
+				wg := sync.WaitGroup{}
+				for range dataArr {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						q.Dequeue()
+					}()
+
+					wg.Wait()
+				}
+
+				stopChan2 <- struct{}{}
+			}()
+
+			<-stopChan1
+			<-stopChan2
 		}
 	})
+}
 
-	b.Run("random message size", func(b *testing.B) {
-		const messageCount = 1000
-		const size = MB * 3
+func BenchmarkNewMS_RW(b *testing.B) {
+	dataArr := generateData(concurrent)
 
-		messages := make([][]byte, messageCount)
-
-		for i := range messageCount {
-			messages[i] = createFixedData(size)
-		}
+	b.Run("test concurrent writes", func(b *testing.B) {
 
 		for i := 0; i < b.N; i++ {
-			q := NewQueue(messageCount, 8*MB)
-			concurrentPush(&q, messages)
+			q := NewMichaelScott()
+			stopChan1 := make(chan struct{})
+			stopChan2 := make(chan struct{})
+
+			go func() {
+				wg := sync.WaitGroup{}
+				for _, data := range dataArr {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						q.Enqueue(data)
+					}()
+				}
+
+				wg.Wait()
+				stopChan1 <- struct{}{}
+			}()
+
+			go func() {
+				wg := sync.WaitGroup{}
+				for range dataArr {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						q.Dequeue()
+					}()
+
+					wg.Wait()
+				}
+
+				stopChan2 <- struct{}{}
+			}()
+
+			<-stopChan1
+			<-stopChan2
 		}
 	})
+}
+
+func BenchmarkMichaelScott(b *testing.B) {
+	wg := sync.WaitGroup{}
+	dataArr := generateData(concurrent)
+	qs := make([]*MichaelScott, 0, b.N)
+
+	for i := 0; i < b.N; i++ {
+		q := NewMichaelScott()
+
+		b.Run("test concurrent writes", func(b *testing.B) {
+			for _, data := range dataArr {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					q.Enqueue(data)
+				}()
+			}
+
+			wg.Wait()
+		})
+
+		qs = append(qs, q)
+	}
+
+	for i := 0; i < b.N; i++ {
+		q := qs[i]
+		b.Run("test concurrent reads", func(b *testing.B) {
+			for range dataArr {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_, _ = q.Dequeue()
+				}()
+			}
+
+			wg.Wait()
+		})
+	}
+}
+
+func BenchmarkLinkedQueue(b *testing.B) {
+	wg := sync.WaitGroup{}
+	dataArr := generateData(concurrent)
+	qs := make([]*LinkedQueue, b.N)
+
+	for i := 0; i < b.N; i++ {
+		q := &LinkedQueue{}
+		qs[i] = q
+
+		b.Run("test concurrent writes", func(b *testing.B) {
+			for _, data := range dataArr {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					q.Enqueue(data)
+				}()
+			}
+			wg.Wait()
+		})
+	}
+
+	for i := 0; i < b.N; i++ {
+		q := qs[i]
+
+		b.Run("test concurrent reads", func(b *testing.B) {
+			for range dataArr {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					_, _ = q.Dequeue()
+				}()
+			}
+			wg.Wait()
+		})
+	}
 }

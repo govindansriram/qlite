@@ -1,7 +1,6 @@
 package server
 
 import (
-	"benchai/qlite/queue"
 	"errors"
 	"fmt"
 	"log"
@@ -64,8 +63,8 @@ func newUniqueConnections(expectedSize uint16) uniqueConnections {
 type User struct {
 	name       []byte // the username
 	password   []byte // the users password
-	publisher  bool   // user can write messages to the queue
-	subscriber bool   // user can read messages from the queue
+	publisher  bool   // user can write messages to the qu
+	subscriber bool   // user can read messages from the qu
 }
 
 /*
@@ -105,10 +104,11 @@ type Server struct {
 	port                     uint16        // the port the server will run on
 	maxSubscriberConnections uint16        // the max amount of subscriber connections
 	maxPublisherConnections  uint16        // the max amount of publisher connections
-	maxMessages              uint32        // the max amount of messages that can be in the queue
+	maxMessages              uint32        // the max amount of messages that can be in the qu
 	maxMessageSize           uint32        // the max size a message can be
 	maxIoSeconds             time.Duration // how much time can be spent waiting for IO messages to complete
-	pollingTimeSeconds       time.Duration // how long to poll the queue for a response
+	pollingTimeSeconds       time.Duration // how long to poll the qu for a response
+	maxHiddenTime            time.Duration // how long the message can be hidden from consumers for
 	lock                     sync.Mutex
 	currentPublisher         atomic.Int32
 	currentSubscribers       atomic.Int32
@@ -171,6 +171,7 @@ func NewServer(
 		maxSubscriberConnections: maxSubs,
 		maxPublisherConnections:  maxPubs,
 		maxMessages:              maxMess,
+		maxHiddenTime:            time.Second * 30,
 		maxIoSeconds:             time.Duration(maxIoTimeSeconds) * time.Second,
 		pollingTimeSeconds:       time.Duration(maxPollingTimeSeconds) * time.Second,
 		maxMessageSize:           maxMessSize,
@@ -218,7 +219,7 @@ func listenerLoop(
 	}()
 
 	workers := make(chan struct{}, server.maxPublisherConnections+server.maxSubscriberConnections)
-	q := queue.NewQueue(server.maxMessages, server.maxMessageSize)
+	q := NewMSQueue(server.maxMessageSize, server.maxHiddenTime)
 
 	for {
 		select {
@@ -251,7 +252,7 @@ func listenerLoop(
 					pCounter.Add(-1)
 				}()
 
-				receiveRequests(conn, server, &q, role)
+				receiveRequests(conn, server, q, role)
 			}()
 		}
 	}

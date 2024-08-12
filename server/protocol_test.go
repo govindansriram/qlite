@@ -1,10 +1,11 @@
 package server
 
 import (
-	"benchai/qlite/queue"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
+	"github.com/google/uuid"
 	"testing"
 	"time"
 )
@@ -86,7 +87,6 @@ func Test_parseMessage(t *testing.T) {
 
 func Test_handlePush(t *testing.T) {
 
-	var maxMessSize uint32 = 200
 	routines := 50
 
 	duration := time.Second * 1
@@ -125,8 +125,8 @@ func Test_handlePush(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1000, maxMessSize)
-		alive := handlePush(serverConn, bodyBytes, &q, duration)
+		q := NewMSQueue(1000, time.Second*100)
+		alive := handlePush(serverConn, bodyBytes, q, duration)
 
 		if !alive {
 			t.Fatal("failed to write")
@@ -139,7 +139,7 @@ func Test_handlePush(t *testing.T) {
 		}
 
 		if q.Len() != 1 {
-			t.Errorf("invalid queue size expected 1 got %d", q.Len())
+			t.Errorf("invalid qu size expected 1 got %d", q.Len())
 		}
 
 		splits := bytes.Split(message, []byte(";"))
@@ -173,10 +173,10 @@ func Test_handlePush(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1000, maxMessSize)
+		q := NewMSQueue(1000, time.Second*100)
 
 		for range routines {
-			alive := handlePush(serverConn, bodyBytes, &q, duration)
+			alive := handlePush(serverConn, bodyBytes, q, duration)
 
 			if !alive {
 				t.Error("failed write")
@@ -218,53 +218,8 @@ func Test_handlePush(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1000, maxMessSize)
-		alive := handlePush(serverConn, []byte{}, &q, duration)
-
-		if !alive {
-			t.Error("failed write")
-		}
-
-		message, alive := readMessage(clientConn, duration)
-
-		if !alive {
-			t.Error("failed read")
-		}
-
-		splits := bytes.Split(message, []byte(";"))
-
-		if len(splits) != 2 {
-			t.Error("invalid response received")
-		}
-
-		if !bytes.Equal(splits[0], []byte("FAIL")) {
-			t.Error("invalid response received")
-		}
-	})
-
-	t.Run("write to full queue", func(t *testing.T) {
-		ts := newTestServer()
-		serverConn, clientConn, err := ts.getServerConn()
-
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		defer func() {
-			_ = serverConn.Close()
-			_ = clientConn.Close()
-			ts.endServer(t)
-		}()
-
-		q := queue.NewQueue(1, maxMessSize)
-
-		_, err = q.Push([]byte("123"))
-
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		alive := handlePush(serverConn, []byte{}, &q, duration)
+		q := NewMSQueue(1000, time.Second*100)
+		alive := handlePush(serverConn, []byte{}, q, duration)
 
 		if !alive {
 			t.Error("failed write")
@@ -288,10 +243,10 @@ func Test_handlePush(t *testing.T) {
 	})
 }
 
-func Test_shortPop(t *testing.T) {
-	var maxMessSize uint32 = 200
+func Test_handleHide(t *testing.T) {
 	const routines = 50
 	duration := time.Second * 1
+	maxHiddenTime := time.Duration(10) * time.Second
 
 	t.Run("valid pop", func(t *testing.T) {
 		ts := newTestServer()
@@ -307,13 +262,15 @@ func Test_shortPop(t *testing.T) {
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1, maxMessSize)
+		q := NewMSQueue(1000, time.Second*100)
+		defer q.Kill()
+
 		_, err = q.Push([]byte("123"))
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		alive := handleShortPop(serverConn, &q, duration)
+		alive := handleHide(serverConn, q, maxHiddenTime, duration)
 
 		if !alive {
 			t.Error("failed write")
@@ -325,22 +282,34 @@ func Test_shortPop(t *testing.T) {
 			t.Error("failed read")
 		}
 
-		splits := bytes.Split(message, []byte(";"))
+		before, after, found := bytes.Cut(message, []byte(";"))
 
-		if len(splits) != 2 {
+		if !found {
+			t.Fatal("could not extract response")
+		}
+
+		if !bytes.Equal(before, []byte("PASS")) {
 			t.Error("invalid response received")
 		}
 
-		if !bytes.Equal(splits[0], []byte("PASS")) {
-			t.Error("invalid response received")
+		uid, err := uuid.FromBytes(after[:16])
+
+		if err != nil {
+			t.Fatal(err)
 		}
+
+		mess := after[17:]
 
 		if q.Len() != 0 {
-			t.Error("queue was not updated")
+			t.Error("qu was not updated")
 		}
 
-		if !bytes.Equal(splits[1], []byte("123")) {
+		if !bytes.Equal(mess, []byte("123")) {
 			t.Error("invalid response received")
+		}
+
+		if err = q.Delete(uid); err != nil {
+			t.Error(err)
 		}
 	})
 
@@ -352,13 +321,14 @@ func Test_shortPop(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		q := NewMSQueue(1000, time.Second*100)
+
 		defer func() {
+			q.Kill()
 			_ = serverConn.Close()
 			_ = clientConn.Close()
 			ts.endServer(t)
 		}()
-
-		q := queue.NewQueue(50, maxMessSize)
 
 		for range routines {
 			_, err = q.Push([]byte("123"))
@@ -368,7 +338,7 @@ func Test_shortPop(t *testing.T) {
 		}
 
 		for idx := range routines {
-			alive := handleShortPop(serverConn, &q, duration)
+			alive := handleHide(serverConn, q, maxHiddenTime, duration)
 			if !alive {
 				t.Error("failed write")
 			}
@@ -380,9 +350,8 @@ func Test_shortPop(t *testing.T) {
 			}
 
 			if q.Len() != int32(routines-1-idx) {
-				t.Errorf("queue was not properly pushed")
+				t.Errorf("qu was not properly pushed")
 			}
-
 		}
 	})
 
@@ -394,15 +363,16 @@ func Test_shortPop(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		q := NewMSQueue(1000, time.Second*100)
+
 		defer func() {
+			q.Kill()
 			_ = serverConn.Close()
 			_ = clientConn.Close()
 			ts.endServer(t)
 		}()
 
-		q := queue.NewQueue(1, maxMessSize)
-
-		alive := handleShortPop(serverConn, &q, duration)
+		alive := handleHide(serverConn, q, maxHiddenTime, duration)
 
 		if !alive {
 			t.Error("failed write")
@@ -424,13 +394,71 @@ func Test_shortPop(t *testing.T) {
 			t.Error("invalid response received")
 		}
 	})
+
+	t.Run("test request cancellation", func(t *testing.T) {
+		ts := newTestServer()
+		serverConn, _, err := ts.getServerConn()
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_ = serverConn.Close()
+
+		q := NewMSQueue(1000, time.Second*100)
+
+		defer func() {
+			q.Kill()
+			_ = serverConn.Close()
+			ts.endServer(t)
+		}()
+
+		_, err = q.Push([]byte("123"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		alive := handleHide(serverConn, q, maxHiddenTime, duration)
+
+		if alive {
+			t.Error("write succeeded")
+		}
+
+		tout, cf := context.WithTimeout(context.Background(), time.Second*1)
+		defer cf()
+
+		ch := make(chan struct{})
+		alive = true
+
+		go func() {
+			for q.Len() == 0 && alive {
+			}
+
+			if !alive {
+				return
+			}
+
+			if q.Len() == 1 {
+				ch <- struct{}{}
+			}
+		}()
+
+		select {
+		case <-ch:
+			return
+		case <-tout.Done():
+			alive = false
+			t.Fatal(context.DeadlineExceeded)
+		}
+	})
 }
 
-func Test_longPop(t *testing.T) {
-	var maxMessSize uint32 = 200
+func Test_handlePoll(t *testing.T) {
 	duration := time.Second * 1
+	pollingTime := time.Second * 1
+	hiddenDuration := time.Second * 20
 
-	t.Run("test longPop prefilled", func(t *testing.T) {
+	t.Run("test poll", func(t *testing.T) {
 		ts := newTestServer()
 		serverConn, clientConn, err := ts.getServerConn()
 
@@ -438,20 +466,21 @@ func Test_longPop(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		q := NewMSQueue(1000, time.Second*100)
+
 		defer func() {
 			_ = serverConn.Close()
 			_ = clientConn.Close()
 			ts.endServer(t)
+			q.Kill()
 		}()
-
-		q := queue.NewQueue(1, maxMessSize)
 		_, err = q.Push([]byte("1234"))
 
 		if err != nil {
 			t.Error(err)
 		}
 
-		alive := handleLongPop(serverConn, &q, duration, time.Second*5)
+		alive := handlePoll(serverConn, q, duration, hiddenDuration, pollingTime)
 
 		if !alive {
 			t.Error("failed write")
@@ -463,9 +492,13 @@ func Test_longPop(t *testing.T) {
 			t.Error("failed read")
 		}
 
-		splits := bytes.Split(message, []byte(";"))
+		before, after, found := bytes.Cut(message, []byte(";"))
 
-		if !bytes.Equal(splits[0], []byte("PASS")) {
+		if !found {
+			t.Fatal("could not accurately split message")
+		}
+
+		if !bytes.Equal(before, []byte("PASS")) {
 			t.Error("invalid response received")
 		}
 
@@ -473,7 +506,7 @@ func Test_longPop(t *testing.T) {
 			t.Error("queue was not updated")
 		}
 
-		if !bytes.Equal(splits[1], []byte("1234")) {
+		if !bytes.Equal(after[17:], []byte("1234")) {
 			t.Error("invalid response received")
 		}
 	})
@@ -486,17 +519,14 @@ func Test_longPop(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		q := NewMSQueue(1000, time.Second*100)
+
 		defer func() {
 			_ = serverConn.Close()
 			_ = clientConn.Close()
 			ts.endServer(t)
+			q.Kill()
 		}()
-
-		q := queue.NewQueue(1, maxMessSize)
-
-		if err != nil {
-			t.Error(err)
-		}
 
 		go func() {
 			time.Sleep(500 * time.Millisecond)
@@ -507,7 +537,7 @@ func Test_longPop(t *testing.T) {
 			}
 		}()
 
-		alive := handleLongPop(serverConn, &q, duration, time.Second*2)
+		alive := handlePoll(serverConn, q, duration, hiddenDuration, pollingTime)
 
 		if !alive {
 			t.Error("failed write")
@@ -519,9 +549,13 @@ func Test_longPop(t *testing.T) {
 			t.Error("failed read")
 		}
 
-		splits := bytes.Split(message, []byte(";"))
+		before, after, found := bytes.Cut(message, []byte(";"))
 
-		if !bytes.Equal(splits[0], []byte("PASS")) {
+		if !found {
+			t.Fatal("could not accurately split message")
+		}
+
+		if !bytes.Equal(before, []byte("PASS")) {
 			t.Error("invalid response received")
 		}
 
@@ -529,7 +563,7 @@ func Test_longPop(t *testing.T) {
 			t.Error("queue was not updated")
 		}
 
-		if !bytes.Equal(splits[1], []byte("1234")) {
+		if !bytes.Equal(after[17:], []byte("1234")) {
 			t.Error("invalid response received")
 		}
 	})
@@ -542,15 +576,16 @@ func Test_longPop(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		q := NewMSQueue(1000, time.Second*100)
+
 		defer func() {
 			_ = serverConn.Close()
 			_ = clientConn.Close()
 			ts.endServer(t)
+			q.Kill()
 		}()
 
-		q := queue.NewQueue(1, maxMessSize)
-
-		alive := handleLongPop(serverConn, &q, time.Second*10, time.Millisecond*100)
+		alive := handlePoll(serverConn, q, duration, hiddenDuration, pollingTime)
 
 		if !alive {
 			t.Error("failed write")
@@ -571,7 +606,6 @@ func Test_longPop(t *testing.T) {
 }
 
 func Test_len(t *testing.T) {
-	var maxMessSize uint32 = 200
 	duration := time.Second * 1
 
 	ts := newTestServer()
@@ -581,13 +615,15 @@ func Test_len(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	q := NewMSQueue(1000, time.Second*100)
+
 	defer func() {
 		_ = serverConn.Close()
 		_ = clientConn.Close()
 		ts.endServer(t)
+		q.Kill()
 	}()
 
-	q := queue.NewQueue(10, maxMessSize)
 	_, err = q.Push([]byte("12354"))
 	if err != nil {
 		t.Error(err)
@@ -598,7 +634,7 @@ func Test_len(t *testing.T) {
 		t.Error(err)
 	}
 
-	alive := handleLen(serverConn, &q, time.Millisecond*100)
+	alive := handleLen(serverConn, q, time.Millisecond*100)
 
 	if !alive {
 		t.Error("failed write")
