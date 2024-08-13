@@ -48,8 +48,10 @@ func (s *serverSettings) build() (*server.Server, error) {
 		s.MaxMessages,
 		s.MaxMessageSize,
 		s.MaxIoTimeSeconds,
+		4,
 		s.MaxPollingTimeSeconds,
-		s.Address)
+		s.Address,
+		false)
 
 	if err != nil {
 		return nil, err

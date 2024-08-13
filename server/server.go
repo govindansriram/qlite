@@ -10,15 +10,35 @@ import (
 	"time"
 )
 
+var verbose bool
+
+func changeVerbosity() {
+	verbose = !verbose
+}
+
+func logMessage(statement string, extra ...string) {
+	if !verbose {
+		return
+	}
+
+	statement = fmt.Sprintf(statement, extra)
+	log.Println(statement)
+}
+
 /*
 uniqueConnections
 
 holds all currently active connections, useful for closing all active sessions in case of a shutdown
 */
+//type uniqueConnections struct {
+//	currentId atomic.Uint32
+//	lock      sync.Mutex
+//	connMap   map[uint32]net.Conn
+//}
+
 type uniqueConnections struct {
 	currentId atomic.Uint32
-	lock      sync.Mutex
-	connMap   map[uint32]net.Conn
+	connMap   sync.Map
 }
 
 /*
@@ -27,14 +47,8 @@ write
 stores a connection
 */
 func (u *uniqueConnections) write(conn net.Conn) uint32 {
-	u.lock.Lock()
-	defer u.lock.Unlock()
-
-	key := u.currentId.Load()
-
-	u.connMap[key] = conn
-	u.currentId.Add(1)
-
+	key := u.currentId.Add(1)
+	u.connMap.Store(key, conn)
 	return key
 }
 
@@ -44,20 +58,14 @@ remove
 deletes a connection
 */
 func (u *uniqueConnections) remove(key uint32) {
-	u.lock.Lock()
-	defer u.lock.Unlock()
-	delete(u.connMap, key)
-}
-
-/*
-newUniqueConnections
-
-creates a new uniqueConnections instance
-*/
-func newUniqueConnections(expectedSize uint16) uniqueConnections {
-	return uniqueConnections{
-		connMap: make(map[uint32]net.Conn, expectedSize),
+	val, loaded := u.connMap.LoadAndDelete(key)
+	if !loaded {
+		return
 	}
+
+	con := val.(net.Conn)
+	closeConn(con)
+	return
 }
 
 type User struct {
@@ -107,11 +115,11 @@ type Server struct {
 	maxMessages              uint32        // the max amount of messages that can be in the qu
 	maxMessageSize           uint32        // the max size a message can be
 	maxIoSeconds             time.Duration // how much time can be spent waiting for IO messages to complete
-	pollingTimeSeconds       time.Duration // how long to poll the qu for a response
+	pollingTimeSeconds       time.Duration // how long to poll the queue for a response
 	maxHiddenTime            time.Duration // how long the message can be hidden from consumers for
-	lock                     sync.Mutex
-	currentPublisher         atomic.Int32
-	currentSubscribers       atomic.Int32
+	lock                     sync.Mutex    // synchronizes access to the server settings
+	currentPublisher         atomic.Int32  // the current amount of publishers connected
+	currentSubscribers       atomic.Int32  // the current amount of subscribers connected
 }
 
 func NewServer(
@@ -122,8 +130,10 @@ func NewServer(
 	maxMess uint32,
 	maxMessSize uint32,
 	maxIoTimeSeconds uint16,
+	maxHiddenTime uint16,
 	maxPollingTimeSeconds uint16,
-	address string) (*Server, error) {
+	address string,
+	verbose bool) (*Server, error) {
 
 	if len(users) == 0 {
 		return nil, errors.New("no users are present for connection")
@@ -165,13 +175,21 @@ func NewServer(
 		address = "localhost"
 	}
 
+	if maxHiddenTime == 0 {
+		maxHiddenTime = 30
+	}
+
+	if verbose {
+		changeVerbosity()
+	}
+
 	return &Server{
 		users:                    users,
 		port:                     port,
 		maxSubscriberConnections: maxSubs,
 		maxPublisherConnections:  maxPubs,
 		maxMessages:              maxMess,
-		maxHiddenTime:            time.Second * 30,
+		maxHiddenTime:            time.Second * time.Duration(maxHiddenTime),
 		maxIoSeconds:             time.Duration(maxIoTimeSeconds) * time.Second,
 		pollingTimeSeconds:       time.Duration(maxPollingTimeSeconds) * time.Second,
 		maxMessageSize:           maxMessSize,
@@ -183,23 +201,24 @@ func (s *Server) Start(kill <-chan struct{}) {
 	listener, err := net.Listen("tcp", server)
 
 	if err != nil {
-		log.Printf("could not start server due to: %v", err)
+		logMessage("could not start server due to: %v", err.Error())
 		return
 	}
 
 	defer func() {
 		err := listener.Close()
 		if err != nil {
-			log.Println(err)
+			logMessage(err.Error())
 		}
 	}()
 
-	log.Printf("server running on %s \n", server)
+	logMessage("server running on %s \n", server)
 
 	finished := make(chan struct{})
 
 	go func() {
-		<-kill
+		for range kill {
+		}
 		finished <- struct{}{}
 	}()
 
@@ -211,11 +230,15 @@ func listenerLoop(
 	server *Server,
 	listener net.Listener,
 ) {
-	connections := newUniqueConnections(server.maxPublisherConnections + server.maxSubscriberConnections)
+	wg := sync.WaitGroup{}
+	connections := uniqueConnections{}
 	defer func() {
-		for _, con := range connections.connMap {
-			closeConn(con)
-		}
+		wg.Wait()
+		connections.connMap.Range(func(key, value any) bool {
+			pid := key.(uint32)
+			connections.remove(pid)
+			return true
+		})
 	}()
 
 	workers := make(chan struct{}, server.maxPublisherConnections+server.maxSubscriberConnections)
@@ -224,18 +247,22 @@ func listenerLoop(
 	for {
 		select {
 		case <-finished:
+			q.Kill()
 			return
 		case workers <- struct{}{}:
+			wg.Add(1)
 			go func() {
 				conn, err := listener.Accept()
 
 				if err != nil {
+					wg.Done()
 					<-workers
-					log.Printf("experienced a error trying to establish a connection: %v \n", err)
+					logMessage("experienced a error trying to establish a connection: %v", err.Error())
 					return
 				}
 
 				pid := connections.write(conn)
+				wg.Done()
 
 				state, role, pCounter := authenticate(server, conn)
 				defer func() {

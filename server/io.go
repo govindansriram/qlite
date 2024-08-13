@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"time"
 )
@@ -20,7 +19,7 @@ close the connection and log the error message
 func closeConn(conn net.Conn) {
 	err := conn.Close()
 	if err != nil {
-		log.Println(err)
+		logMessage(err.Error())
 	}
 }
 
@@ -210,6 +209,6 @@ func writeSuccess(conn net.Conn, message []byte, deadline time.Duration) bool {
 }
 
 func logError(conn net.Conn, err error) {
-	log.Printf("experienced error: %v", err)
+	logMessage("experienced error: %v", err.Error())
 	closeConn(conn)
 }

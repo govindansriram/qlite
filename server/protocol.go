@@ -44,7 +44,7 @@ func receiveRequests(conn net.Conn, server *Server, q *Queue, role string) {
 				err = errors.New("publishers cannot pop from the qu")
 				alive = writeError(conn, err, server.maxIoSeconds)
 			} else {
-				hiddenDuration := convertBytesToSeconds(message)
+				hiddenDuration := convertBytesToSeconds(data)
 				alive = handleHide(conn, q, hiddenDuration, server.maxIoSeconds)
 			}
 		case "POLL":
@@ -52,7 +52,7 @@ func receiveRequests(conn net.Conn, server *Server, q *Queue, role string) {
 				err = errors.New("publishers cannot pop from the qu")
 				alive = writeError(conn, err, server.maxIoSeconds)
 			} else {
-				hiddenDuration := convertBytesToSeconds(message)
+				hiddenDuration := convertBytesToSeconds(data)
 				alive = handlePoll(conn, q, server.maxIoSeconds, hiddenDuration, server.pollingTimeSeconds)
 			}
 		case "LEN":
@@ -247,7 +247,7 @@ func handleDel(conn net.Conn, q *Queue, deadline time.Duration, uid uuid.UUID) b
 	err := q.Delete(uid)
 
 	if err != nil {
-		writeError(conn, err, deadline)
+		return writeError(conn, err, deadline)
 	}
 
 	return writeSuccess(conn, uid[:], deadline)

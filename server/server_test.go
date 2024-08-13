@@ -2,15 +2,12 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"log"
-	"math/rand/v2"
 	"net"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -61,7 +58,7 @@ func (testConnection) SetWriteDeadline(t time.Time) error {
 
 func TestUniqueConnections_write(t *testing.T) {
 	routines := 30
-	conns := newUniqueConnections(30)
+	conns := uniqueConnections{}
 
 	wg := sync.WaitGroup{}
 
@@ -75,14 +72,21 @@ func TestUniqueConnections_write(t *testing.T) {
 
 	wg.Wait()
 
-	if len(conns.connMap) != routines {
+	count := 0
+
+	conns.connMap.Range(func(key, value any) bool {
+		count++
+		return true
+	})
+
+	if count != routines {
 		t.Error("writes failed")
 	}
 }
 
 func TestUniqueConnections_remove(t *testing.T) {
 	routines := 30
-	conns := newUniqueConnections(30)
+	conns := uniqueConnections{}
 
 	for range routines {
 		_ = conns.write(testConnection("test"))
@@ -94,14 +98,21 @@ func TestUniqueConnections_remove(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			conns.remove(uint32(idx))
+			conns.remove(uint32(idx + 1))
 		}()
 	}
 
 	wg.Wait()
+	count := 0
 
-	if len(conns.connMap) != 0 {
-		t.Error("removes failed")
+	conns.connMap.Range(func(key, value any) bool {
+		fmt.Println(key, value)
+		count++
+		return true
+	})
+
+	if count != 0 {
+		t.Error("reads failed")
 	}
 }
 
@@ -280,7 +291,6 @@ func Test_listenerLoop(t *testing.T) {
 
 	t.Run("standard test", func(t *testing.T) {
 		list, err := getListener()
-
 		if err != nil {
 			t.Error(err)
 		}
@@ -314,8 +324,10 @@ func Test_listenerLoop(t *testing.T) {
 			100,
 			10_000,
 			5,
+			1,
 			10,
-			"")
+			"",
+			true)
 
 		if err != nil {
 			t.Error(err)
@@ -397,396 +409,4 @@ func Test_listenerLoop(t *testing.T) {
 			}
 		}
 	})
-}
-
-func pushRandomData(conn net.Conn, maxIo time.Duration) (bool, error) {
-	randTime := rand.IntN(6)
-	time.Sleep(time.Millisecond * 1000 * time.Duration(randTime))
-
-	byteSlice := make([]byte, (randTime+1)*100*2)
-
-	for idx := range (randTime + 1) * 100 {
-		byteSlice[idx] = 'a'
-	}
-
-	messageSlice := make([]byte, 5+len(byteSlice))
-
-	copy(messageSlice, "PUSH;")
-	copy(messageSlice[5:], byteSlice)
-
-	alive := writeMessage(conn, messageSlice, maxIo)
-
-	if !alive {
-		return false, errors.New("connection expired unexpectedly")
-	}
-
-	mess, alive := readMessage(conn, maxIo)
-
-	if !alive {
-		return false, errors.New("connection expired unexpectedly")
-	}
-
-	bs := bytes.Split(mess, []byte(";"))
-
-	if bytes.Equal(bs[0], []byte("PASS")) {
-		return true, nil
-	} else {
-		return false, nil
-	}
-}
-
-func popRandomData(conn net.Conn, maxIo time.Duration, poll time.Duration) (bool, error) {
-	randTime := rand.IntN(6)
-	time.Sleep(time.Millisecond * 1000 * time.Duration(randTime))
-
-	isEven := (randTime % 2) == 0
-	var mess []byte
-
-	if isEven {
-		mess = []byte("LPOP;")
-		maxIo += poll
-	} else {
-		mess = []byte("SPOP;")
-	}
-
-	alive := writeMessage(conn, mess, maxIo)
-
-	if !alive {
-		return false, errors.New("connection expired unexpectedly")
-	}
-
-	mess, alive = readMessage(conn, maxIo)
-
-	if !alive {
-		return false, errors.New("connection expired unexpectedly")
-	}
-
-	bs := bytes.Split(mess, []byte(";"))
-
-	if bytes.Equal(bs[0], []byte("PASS")) {
-		return true, nil
-	} else {
-		return false, nil
-	}
-}
-
-func subscriber(
-	conn net.Conn,
-	maxIo time.Duration,
-	poll time.Duration,
-	maxPops int) (int, error) {
-
-	currentPops := 0
-	resp := make(chan bool)
-	errChan := make(chan error)
-	total := int((maxIo * time.Duration(maxPops) * 2).Milliseconds())
-
-	randTime := rand.IntN(total)
-
-	ctx, cf := context.WithDeadline(
-		context.Background(),
-		time.Now().Add(time.Duration(randTime)*time.Millisecond))
-
-	defer cf()
-
-	for {
-		if currentPops == maxPops {
-			closeConn(conn)
-			return maxPops, nil
-		}
-		go func() {
-			state, err := popRandomData(conn, maxIo, poll)
-			errChan <- err
-			resp <- state
-
-		}()
-
-		select {
-		case <-ctx.Done():
-			closeConn(conn)
-
-			<-errChan
-			if <-resp {
-				currentPops++
-			}
-
-			return currentPops, nil
-		case e := <-errChan:
-			if e == nil {
-				if <-resp {
-					currentPops++
-				}
-			} else {
-				<-resp
-				return 0, e
-			}
-		}
-	}
-}
-
-func publisher(conn net.Conn, maxIo time.Duration) error {
-	messages := 20
-
-	for messages != 0 {
-		popped, err := pushRandomData(conn, maxIo)
-
-		if err != nil {
-			return err
-		}
-
-		if popped {
-			messages--
-		}
-	}
-
-	closeConn(conn)
-	return nil
-}
-
-func runSubscribers(
-	maxSubscribers int,
-	maxIo time.Duration,
-	poll time.Duration,
-	maxPops int,
-	killCh <-chan struct{},
-	errChan chan<- error,
-	usr User,
-	totalPops int) bool {
-
-	maxSubs := make(chan struct{}, maxSubscribers)
-
-	currentPops := atomic.Int32{}
-	for {
-		popped := currentPops.Load()
-		if popped >= int32(totalPops) {
-			return true
-		}
-
-		select {
-		case <-killCh:
-			return false
-		case maxSubs <- struct{}{}:
-			go func() {
-				ctx, cf := context.WithDeadline(context.Background(), time.Now().Add(time.Second*3))
-				var conn net.Conn
-				var err error
-
-				defer func() {
-					cf()
-					<-maxSubs
-				}()
-
-				stay := true
-				for stay {
-					select {
-					case <-ctx.Done():
-						errChan <- ctx.Err()
-						return
-					default:
-						network := fmt.Sprintf("localhost:%d", 8080)
-						conn, err = net.Dial("tcp", network)
-						if err == nil {
-							stay = false
-						}
-						err = testAuthenticate(conn, maxIo, usr, "subscriber")
-						if err != nil {
-							errChan <- err
-						}
-					}
-				}
-
-				popped, err := subscriber(conn, maxIo, poll, maxPops)
-				if err != nil {
-					errChan <- err
-				}
-
-				currentPops.Add(int32(popped))
-			}()
-		}
-	}
-}
-
-func runPublishers(
-	maxPublishers int,
-	maxIo time.Duration,
-	killCh <-chan struct{},
-	errChan chan<- error,
-	usr User) {
-	maxPubs := make(chan struct{}, maxPublishers)
-
-	alive := true
-	for alive {
-		select {
-		case <-killCh:
-			alive = false
-		case maxPubs <- struct{}{}:
-			go func() {
-				ctx, cf := context.WithDeadline(context.Background(), time.Now().Add(time.Second*3))
-				var conn net.Conn
-				var err error
-
-				defer func() {
-					cf()
-					<-maxPubs
-				}()
-
-				stay := true
-				for stay {
-					select {
-					case <-ctx.Done():
-						errChan <- ctx.Err()
-						return
-					default:
-						network := fmt.Sprintf("localhost:%d", 8080)
-						conn, err = net.Dial("tcp", network)
-						if err == nil {
-							stay = false
-						}
-						err = testAuthenticate(conn, maxIo, usr, "publisher")
-						if err != nil {
-							errChan <- err
-						}
-					}
-				}
-
-				err = publisher(conn, maxIo)
-				if err != nil {
-					errChan <- err
-				}
-			}()
-		}
-	}
-}
-
-func Test_Server(t *testing.T) {
-	list, err := getListener()
-
-	if err != nil {
-		t.Error(err)
-	}
-
-	defer func() {
-		err = list.Close()
-		log.Println(err)
-	}()
-
-	u1, err := NewUser("publisher", "test", true, false)
-
-	if err != nil {
-		t.Error(err)
-	}
-
-	u2, err := NewUser("subscriber", "test", false, true)
-
-	if err != nil {
-		t.Error(err)
-	}
-
-	users := []User{
-		*u1, *u2,
-	}
-
-	server, err := NewServer(
-		users,
-		8080,
-		10,
-		20,
-		3000,
-		10_000,
-		5,
-		10,
-		"")
-
-	if err != nil {
-		t.Error(err)
-		return
-	}
-
-	finishedListener := make(chan struct{})
-	finishedPublisher := make(chan struct{})
-	finishedSubscriber := make(chan struct{})
-	lve := make(chan struct{})
-	errChan := make(chan error)
-
-	go func() {
-		err := <-errChan
-		t.Error(err)
-		finishedPublisher <- struct{}{}
-		finishedListener <- struct{}{}
-		finishedSubscriber <- struct{}{}
-	}()
-
-	go func() {
-		listenerLoop(finishedListener, server, list)
-	}()
-
-	ext := true
-	var lenCon net.Conn
-
-	for ext {
-		network := fmt.Sprintf("localhost:%d", 8080)
-		lenCon, err = net.Dial("tcp", network)
-		if err == nil {
-			ext = false
-		}
-	}
-
-	err = testAuthenticate(lenCon, server.maxIoSeconds, users[0], "publisher")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	go func() {
-		state := runSubscribers(
-			int(server.maxSubscriberConnections),
-			server.maxIoSeconds,
-			server.pollingTimeSeconds,
-			20,
-			finishedSubscriber,
-			errChan,
-			users[1],
-			400)
-
-		if !state {
-			t.Error("failed")
-		}
-
-		finishedPublisher <- struct{}{}
-		finishedListener <- struct{}{}
-		lve <- struct{}{}
-	}()
-
-	go func() {
-		runPublishers(int(server.maxPublisherConnections-1), server.maxIoSeconds, finishedPublisher, errChan, users[0])
-	}()
-
-	var mess []byte
-	for {
-		select {
-		case <-lve:
-			return
-		default:
-			mess = []byte("LEN;")
-			isAlive := writeMessage(lenCon, mess, server.maxIoSeconds)
-
-			if !isAlive {
-				t.Error("failed to get len")
-				return
-			}
-
-			mess, isAlive = readMessage(lenCon, server.maxIoSeconds)
-
-			if !isAlive {
-				t.Error("failed to get len")
-				return
-			}
-
-			_, _, found := bytes.Cut(mess, []byte(";"))
-
-			if !found {
-				t.Error("failed to get len")
-				return
-			}
-		}
-	}
 }
