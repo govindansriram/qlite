@@ -120,6 +120,7 @@ type Server struct {
 	lock                     sync.Mutex    // synchronizes access to the server settings
 	currentPublisher         atomic.Int32  // the current amount of publishers connected
 	currentSubscribers       atomic.Int32  // the current amount of subscribers connected
+	stopChannel              chan struct{} // open closing the server is stopped
 }
 
 func NewServer(
@@ -193,10 +194,11 @@ func NewServer(
 		maxIoSeconds:             time.Duration(maxIoTimeSeconds) * time.Second,
 		pollingTimeSeconds:       time.Duration(maxPollingTimeSeconds) * time.Second,
 		maxMessageSize:           maxMessSize,
+		stopChannel:              make(chan struct{}),
 	}, nil
 }
 
-func (s *Server) Start(kill <-chan struct{}) {
+func (s *Server) Start() {
 	server := fmt.Sprintf("%s:%d", s.address, s.port)
 	listener, err := net.Listen("tcp", server)
 
@@ -214,15 +216,11 @@ func (s *Server) Start(kill <-chan struct{}) {
 
 	logMessage("server running on %s \n", server)
 
-	finished := make(chan struct{})
+	listenerLoop(s.stopChannel, s, listener)
+}
 
-	go func() {
-		for range kill {
-		}
-		finished <- struct{}{}
-	}()
-
-	listenerLoop(finished, s, listener)
+func (s *Server) Stop() {
+	close(s.stopChannel)
 }
 
 func listenerLoop(
@@ -247,6 +245,7 @@ func listenerLoop(
 	for {
 		select {
 		case <-finished:
+			fmt.Println("finished")
 			q.Kill()
 			return
 		case workers <- struct{}{}:

@@ -369,8 +369,6 @@ func handler(lifeline chan struct{}, deadline time.Duration, pubUser, subUser Us
 
 func TestServer_Start(t *testing.T) {
 
-	kChan := make(chan struct{})
-
 	pub, err := NewUser("publisher", "password", true, false)
 
 	if err != nil {
@@ -405,10 +403,10 @@ func TestServer_Start(t *testing.T) {
 
 	go func() {
 		time.Sleep(30 * time.Second)
-		close(kChan)
+		serv.Stop()
 	}()
 
-	go serv.Start(kChan)
+	go serv.Start()
 
-	handler(kChan, serv.maxIoSeconds, *pub, *sub)
+	handler(serv.stopChannel, serv.maxIoSeconds, *pub, *sub)
 }

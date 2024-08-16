@@ -25,6 +25,7 @@ type serverSettings struct {
 	MaxMessageSize           uint32 `yaml:"maxMessageSize"`
 	MaxIoTimeSeconds         uint16 `yaml:"maxIoTimeSeconds"`
 	MaxPollingTimeSeconds    uint16 `yaml:"maxPollingTimeSeconds"`
+	Verbose                  bool   `yaml:"verbose"`
 }
 
 func (s *serverSettings) build() (*server.Server, error) {
@@ -51,7 +52,7 @@ func (s *serverSettings) build() (*server.Server, error) {
 		4,
 		s.MaxPollingTimeSeconds,
 		s.Address,
-		false)
+		s.Verbose)
 
 	if err != nil {
 		return nil, err
