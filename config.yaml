@@ -15,3 +15,5 @@ maxMessageSize: 10000
 maxIoTimeSeconds: 5
 maxPollingTimeSeconds: 10
 address: 0.0.0.0
+maxHiddenTimeSeconds: 10
+verbose: true

@@ -4,7 +4,6 @@ import (
 	queue2 "benchai/qlite/queue"
 	"context"
 	"errors"
-	"fmt"
 	"github.com/google/uuid"
 	"sync"
 	"time"
@@ -35,7 +34,6 @@ func (q *Queue) processor() {
 	for {
 		select {
 		case <-q.killCh:
-			fmt.Println("finished1")
 			return
 		default:
 			q.processing.Range(func(key, value any) bool {

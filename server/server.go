@@ -30,11 +30,6 @@ uniqueConnections
 
 holds all currently active connections, useful for closing all active sessions in case of a shutdown
 */
-//type uniqueConnections struct {
-//	currentId atomic.Uint32
-//	lock      sync.Mutex
-//	connMap   map[uint32]net.Conn
-//}
 
 type uniqueConnections struct {
 	currentId atomic.Uint32
@@ -200,7 +195,13 @@ func NewServer(
 
 func (s *Server) Start() {
 	server := fmt.Sprintf("%s:%d", s.address, s.port)
-	listener, err := net.Listen("tcp", server)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", server)
+
+	if err != nil {
+		logMessage("Failed to resolve TCP address: %v", err.Error())
+	}
+
+	listener, err := net.ListenTCP("tcp", tcpAddr)
 
 	if err != nil {
 		logMessage("could not start server due to: %v", err.Error())
@@ -226,12 +227,10 @@ func (s *Server) Stop() {
 func listenerLoop(
 	finished <-chan struct{},
 	server *Server,
-	listener net.Listener,
+	listener *net.TCPListener,
 ) {
-	wg := sync.WaitGroup{}
 	connections := uniqueConnections{}
 	defer func() {
-		wg.Wait()
 		connections.connMap.Range(func(key, value any) bool {
 			pid := key.(uint32)
 			connections.remove(pid)
@@ -245,25 +244,36 @@ func listenerLoop(
 	for {
 		select {
 		case <-finished:
-			fmt.Println("finished")
 			q.Kill()
 			return
 		case workers <- struct{}{}:
-			wg.Add(1)
+			select {
+			case <-finished:
+				q.Kill()
+				return
+			default:
+			}
+
+			err := listener.SetDeadline(time.Now().Add(5 * time.Second))
+
+			if err != nil {
+				q.Kill()
+				logMessage(err.Error())
+				return
+			}
+
+			conn, err := listener.Accept()
+
+			if err != nil {
+				<-workers
+				logMessage("experienced a error trying to establish a connection: %v", err.Error())
+				continue
+			}
+
+			pid := connections.write(conn)
+
 			go func() {
-				conn, err := listener.Accept()
-
-				if err != nil {
-					wg.Done()
-					<-workers
-					logMessage("experienced a error trying to establish a connection: %v", err.Error())
-					return
-				}
-
-				pid := connections.write(conn)
-				wg.Done()
-
-				state, role, pCounter := authenticate(server, conn)
+				state, role, pCounter := authenticate(server, conn) // why is pCounter used
 				defer func() {
 					closeConn(conn)
 					connections.remove(pid)

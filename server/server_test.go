@@ -206,10 +206,17 @@ func TestNewUser(t *testing.T) {
 	}
 }
 
-func getListener() (net.Listener, error) {
+func getListener() (*net.TCPListener, error) {
 	const network uint16 = 8080
-	server := fmt.Sprintf("localhost:%d", network)
-	listener, err := net.Listen("tcp", server)
+
+	server := fmt.Sprintf("%s:%d", "localhost", network)
+	tcpAddr, err := net.ResolveTCPAddr("tcp", server)
+
+	if err != nil {
+		return nil, err
+	}
+
+	listener, err := net.ListenTCP("tcp", tcpAddr)
 
 	if err != nil {
 		return nil, err

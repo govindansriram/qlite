@@ -2,6 +2,7 @@ package main
 
 import (
 	"benchai/qlite/server"
+	"fmt"
 	"gopkg.in/yaml.v3"
 	"io"
 	"log"
@@ -24,6 +25,7 @@ type serverSettings struct {
 	MaxMessages              uint32 `yaml:"maxMessages"`
 	MaxMessageSize           uint32 `yaml:"maxMessageSize"`
 	MaxIoTimeSeconds         uint16 `yaml:"maxIoTimeSeconds"`
+	MaxHiddenTimeSeconds     uint16 `yaml:"maxHiddenTimeSeconds"`
 	MaxPollingTimeSeconds    uint16 `yaml:"maxPollingTimeSeconds"`
 	Verbose                  bool   `yaml:"verbose"`
 }
@@ -49,7 +51,7 @@ func (s *serverSettings) build() (*server.Server, error) {
 		s.MaxMessages,
 		s.MaxMessageSize,
 		s.MaxIoTimeSeconds,
-		4,
+		s.MaxHiddenTimeSeconds,
 		s.MaxPollingTimeSeconds,
 		s.Address,
 		s.Verbose)
@@ -82,6 +84,8 @@ func loadServerSettings(file *os.File) (*server.Server, error) {
 	settings := &serverSettings{}
 	err = yaml.Unmarshal(content, settings)
 	serv, err := settings.build()
+
+	fmt.Println(settings)
 
 	if err != nil {
 		return nil, err
