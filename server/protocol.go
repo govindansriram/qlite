@@ -34,14 +34,14 @@ func receiveRequests(conn net.Conn, server *Server, q *Queue, role string) {
 		switch function {
 		case "PUSH":
 			if role != "publisher" {
-				err = errors.New("subscribers cannot push to the qu")
+				err = errors.New("subscribers cannot push to the queue")
 				alive = writeError(conn, err, server.maxIoSeconds)
 			} else {
 				alive = handlePush(conn, data, q, server.maxIoSeconds)
 			}
 		case "HIDE":
 			if role != "subscriber" {
-				err = errors.New("publishers cannot pop from the qu")
+				err = errors.New("publishers cannot hide messages on the queue")
 				alive = writeError(conn, err, server.maxIoSeconds)
 			} else {
 				hiddenDuration := convertBytesToSeconds(data)
@@ -49,7 +49,7 @@ func receiveRequests(conn net.Conn, server *Server, q *Queue, role string) {
 			}
 		case "POLL":
 			if role != "subscriber" {
-				err = errors.New("publishers cannot pop from the qu")
+				err = errors.New("publishers cannot poll the queue")
 				alive = writeError(conn, err, server.maxIoSeconds)
 			} else {
 				hiddenDuration := convertBytesToSeconds(data)
@@ -58,15 +58,20 @@ func receiveRequests(conn net.Conn, server *Server, q *Queue, role string) {
 		case "LEN":
 			alive = handleLen(conn, q, server.maxIoSeconds)
 		case "DEL":
-			uid, err := uuid.FromBytes(data)
-			if err != nil {
+			if role != "subscriber" {
+				err = errors.New("publishers cannot delete hidden messages")
 				alive = writeError(conn, err, server.maxIoSeconds)
 			} else {
-				alive = handleDel(conn, q, server.maxIoSeconds, uid)
+				uid, err := uuid.FromBytes(data)
+				if err != nil {
+					alive = writeError(conn, err, server.maxIoSeconds)
+				} else {
+					alive = handleDel(conn, q, server.maxIoSeconds, uid)
+				}
 			}
 		default:
 			err = fmt.Errorf(
-				"error: error can not handle function %s, options are PUSH, LPOP, SPOP and LEN",
+				"error: error can not handle function %s, options are PUSH, HIDE, POLL, DEL and LEN",
 				function)
 
 			alive = writeError(conn, err, server.maxIoSeconds)

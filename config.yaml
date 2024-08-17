@@ -10,10 +10,9 @@ users:
 port: 8080
 maxSubscriberConnections: 5
 maxPublisherConnections: 10
-maxMessages: 1000
 maxMessageSize: 10000
 maxIoTimeSeconds: 5
 maxPollingTimeSeconds: 10
 address: 0.0.0.0
-maxHiddenTimeSeconds: 10
+maxHiddenTimeSeconds: 30
 verbose: true

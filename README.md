@@ -72,12 +72,6 @@ The amount of publishers that can be connected to the server
 maxPublisherConnections: 10
 ```
 
-### maxMessages (uint32) default 100
-The max amount of messages that can be in the queue at once
-```yaml
-maxMessages: 10
-```
-
 ### maxMessageSize (uint32) default 9437184
 The max size of a message in the queue
 ```yaml
@@ -90,10 +84,22 @@ The max amount of time waiting for a read or write on a connection to succeed
 maxIoTimeSeconds: 1000
 ```
 
-### maxPollingTimeSeconds (uint32) default 10
+### maxPollingTimeSeconds (uint16) default 10
 The max amount of time to wait for LPOP to receive a response from the queue
 ```yaml
 maxIoTimeSeconds: 1000
+```
+
+### maxHiddenTimeSeconds (uint16) default 10
+The max amount of time a message can be hidden from subscribers for
+```yaml
+maxIoTimeSeconds: 1000
+```
+
+### verbose (bool) default false
+display server logs
+```yaml
+maxIoTimeSeconds: true
 ```
 
 ## docker YAML config
@@ -110,11 +116,12 @@ users:
 port: 8080
 maxSubscriberConnections: 5
 maxPublisherConnections: 10
-maxMessages: 1000
 maxMessageSize: 10000
 maxIoTimeSeconds: 5
 maxPollingTimeSeconds: 10
 address: 0.0.0.0
+maxHiddenTimeSeconds: 30
+verbose: true
 ```
 
 ## Communication
@@ -154,19 +161,26 @@ The first 4 bytes of every message are an uint32 segment detailing the size of t
 
 After that the ascii name for one of 4 different functions should be present followed by a semicolon these are:
 1) PUSH: push to the queue can only be done by publishers 
-2) SPOP: (short pop), pop from the queue if there is data to pop, else returns error
-3) LPOP: (long pop), polls the queue for data until it gets it for x amount of time, if request times out returns error
-4) LEN: gets the length of the queue
+2) HIDE: if a message is available it's data is returned, and the message is hidden for a specified time
+(up to ***maxHiddenTimeSeconds***) from subscribers
+3) POLL: polls the queue for data until it gets it or until the ***maxPollingTimeSeconds*** times out
+4) DEL: deletes a hidden message
+5) LEN: gets the approximate length of the queue
 
 ### PUSH
 after the semicolon add the message you wish to store on the queue. No binary format is required, it is on the consumer to
 decipher it.
 
-### SPOP
-No data is needed after the semicolon
+### HIDE
+after the semicolon, the hidden time in seconds must be added as an Uint32 in little endian binary format. The hidden
+time must be less than the ***maxHiddenTimeSeconds***
 
-### LPOP
-No data is needed after the semicolon
+### POLL
+after the semicolon, the hidden time in seconds must be added as an Uint32 in little endian binary format. The hidden
+time must be less than the ***maxHiddenTimeSeconds***
+
+### DEL
+after the semicolon, the next 2 bits should contain the uuid of the hidden message
 
 ### LEN
 No data is required after the semicolon
@@ -180,12 +194,16 @@ Following the message length, will be the ascii encoded string PASS or FAIL deli
 - PASS: the position in the queue as a little endian uint32 number
 - FAIL: an error message
 
-### SPOP
-- PASS: the message on the queue
+### HIDE
+- PASS: the uuid of the hidden message followed by a semicolon followed by the message
 - FAIL: an error message
 
-### LPOP
-- PASS: the message on the queue
+### POLL
+- PASS: the uuid of the hidden message followed by a semicolon followed by the message
+- FAIL: an error message
+
+### DEL
+- PASS: the uuid of the hidden message
 - FAIL: an error message
 
 ### LEN

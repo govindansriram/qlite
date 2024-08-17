@@ -328,10 +328,9 @@ func Test_listenerLoop(t *testing.T) {
 			8080,
 			5,
 			3,
-			100,
-			10_000,
+			1000000,
+			60,
 			5,
-			1,
 			10,
 			"",
 			true)

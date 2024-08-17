@@ -1,3 +1,4 @@
 .idea/
 qlite
 dump.go
+deploy.sh

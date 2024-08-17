@@ -390,7 +390,6 @@ func TestServer_Start(t *testing.T) {
 		100,
 		300,
 		100000,
-		100000,
 		60,
 		60,
 		10,

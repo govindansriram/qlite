@@ -107,7 +107,6 @@ type Server struct {
 	port                     uint16        // the port the server will run on
 	maxSubscriberConnections uint16        // the max amount of subscriber connections
 	maxPublisherConnections  uint16        // the max amount of publisher connections
-	maxMessages              uint32        // the max amount of messages that can be in the qu
 	maxMessageSize           uint32        // the max size a message can be
 	maxIoSeconds             time.Duration // how much time can be spent waiting for IO messages to complete
 	pollingTimeSeconds       time.Duration // how long to poll the queue for a response
@@ -123,7 +122,6 @@ func NewServer(
 	port,
 	maxSubs,
 	maxPubs uint16,
-	maxMess uint32,
 	maxMessSize uint32,
 	maxIoTimeSeconds uint16,
 	maxHiddenTime uint16,
@@ -149,10 +147,6 @@ func NewServer(
 
 	if maxPubs == 0 {
 		maxPubs = 1
-	}
-
-	if maxMess == 0 {
-		maxMess = 100
 	}
 
 	if maxMessSize == 0 {
@@ -184,7 +178,6 @@ func NewServer(
 		port:                     port,
 		maxSubscriberConnections: maxSubs,
 		maxPublisherConnections:  maxPubs,
-		maxMessages:              maxMess,
 		maxHiddenTime:            time.Second * time.Duration(maxHiddenTime),
 		maxIoSeconds:             time.Duration(maxIoTimeSeconds) * time.Second,
 		pollingTimeSeconds:       time.Duration(maxPollingTimeSeconds) * time.Second,
