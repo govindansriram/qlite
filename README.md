@@ -99,7 +99,7 @@ maxIoTimeSeconds: 1000
 ### verbose (bool) default false
 display server logs
 ```yaml
-maxIoTimeSeconds: true
+verbose: true
 ```
 
 ## docker YAML config
