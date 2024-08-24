@@ -23,7 +23,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	file, err := os.Open(fileInfo.Name())
+	if fileInfo.IsDir() {
+		log.Fatal("required file received directory")
+	}
+
+	file, err := os.Open(argsWithoutProg[1])
 	if err != nil {
 		log.Fatal(err)
 	}

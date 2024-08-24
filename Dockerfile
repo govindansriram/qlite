@@ -2,12 +2,10 @@ FROM alpine:latest
 
 RUN apk update && apk upgrade
 
+RUN mkdir -p "/app/config"
+
 WORKDIR /app
 
 COPY ./qlite qlite
 
-COPY ./config.yaml config.yaml
-
-EXPOSE 8080
-
-CMD ["./qlite", "start", "config.yaml"]
+CMD ["./qlite", "start", "config/config.yaml"]

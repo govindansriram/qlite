@@ -2,3 +2,6 @@
 qlite
 dump.go
 deploy.sh
+configs/config.yaml
+configs
+compose.yaml
