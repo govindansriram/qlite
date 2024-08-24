@@ -93,13 +93,13 @@ maxIoTimeSeconds: 1000
 ### maxHiddenTimeSeconds (uint16) default 10
 The max amount of time a message can be hidden from subscribers for
 ```yaml
-maxIoTimeSeconds: 1000
+maxHiddenTimeSeconds: 1000
 ```
 
 ### verbose (bool) default false
 display server logs
 ```yaml
-maxIoTimeSeconds: true
+verbose: true
 ```
 
 ## docker YAML config
